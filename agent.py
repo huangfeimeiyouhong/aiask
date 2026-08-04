@@ -11,7 +11,8 @@ Agent 编排 —— 「意图 → 工具调用 → 真实数据 → 自然语言
 import json
 import re
 from semantic_layer import build_system_prompt
-from semantic_tools import call_tool, TOOLS, TOOL_LABELS
+from semantic_tools import (call_tool, TOOLS, TOOL_LABELS,
+                            build_recall_hint, recall_tools_by_alias)
 
 
 def _extract_tool_call(text: str):
@@ -260,6 +261,17 @@ def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3):
         ctx = "；".join(f"已掌握：{p.get('a','')[:90]}" for p in recent)
         context_note = f"\n【对话上下文，用于理解省略与指代】{ctx}\n"
 
+    # 意图召回增强（P2）：按口径注册表 aliases 召回候选工具，作为参考提示注入
+    # system prompt（不进 user 问句，避免污染意图识别）。命中为空时不注入任何内容。
+    recall_hint = build_recall_hint(question)
+    recall_top = recall_tools_by_alias(question, top_k=3)
+    if recall_top:
+        _names = "、".join(f"{TOOL_LABELS.get(n, n)}" for n, _, _ in recall_top)
+        trace.append({"stage": "候选召回", "detail": f"按业务说法召回候选：{_names}（仅供参考）"})
+        yield {"type": "step", "stage": "候选召回",
+               "detail": f"按业务说法召回候选：{_names}（仅供参考）"}
+    retried_with_hint = False
+
     for i in range(max_iter):
         # 多轮上下文只在「基于工具结果生成最终结论」时注入，避免上下文中的
         # "排行/TOP/柱状图"等关键词污染当前问题的意图识别（对 MockLLM 尤其重要）。
@@ -267,7 +279,10 @@ def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3):
             prompt_user = context_note + user_msg
         else:
             prompt_user = user_msg
-        reply, usage = llm.chat(build_system_prompt(), prompt_user, history)
+        # 候选提示只在「尚未取到任何数据」的选工具阶段注入；一旦有工具结果，
+        # 后续轮次是基于真实数据写结论，注入候选反而是噪声。
+        sys_prompt = build_system_prompt(recall_hint if not tool_results else "")
+        reply, usage = llm.chat(sys_prompt, prompt_user, history)
         for k in total_usage:
             total_usage[k] += (usage or {}).get(k, 0)
         call = _extract_tool_call(reply)
@@ -309,7 +324,21 @@ def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3):
             user_msg = ("请严格基于上面的工具真实返回数据，用简洁中文回答用户的问题，"
                         "并引用关键数字；若数据不足请如实说明。不要编造。")
             continue
-        # 没有工具调用 → 视为最终答案
+        # 没有工具调用 → 视为最终答案。
+        # 兜底纠偏（P2）：问句明确命中了已登记的业务说法（高分召回），模型却一个工具都没选，
+        # 大概率是意图漏识别，会导致"我无法回答/凭空作答"。此时提示一次候选让它重选，
+        # 仅重试一次，且仅在还没取到任何真实数据时进行，避免打断正常闲聊与已成功的链路。
+        if (not tool_results and not retried_with_hint and recall_top
+                and recall_top[0][1] >= 6.0):
+            retried_with_hint = True
+            cand = "、".join(f"{n}（{TOOL_LABELS.get(n, n)}）" for n, _, _ in recall_top)
+            trace.append({"stage": "意图纠偏", "detail": f"未识别到取数意图，提示候选后重试：{cand}"})
+            yield {"type": "step", "stage": "意图纠偏",
+                   "detail": f"未识别到取数意图，提示候选后重试：{cand}"}
+            user_msg = (f"{question}\n\n（提示：这个问题应当调用数据工具取真实数据后回答，"
+                        f"最可能的候选是 {cand}。请只输出 JSON 形式的工具调用；"
+                        f"若确实都不适用，再用中文说明原因。）")
+            continue
         answer = reply
         break
     else:

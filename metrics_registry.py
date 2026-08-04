@@ -117,10 +117,11 @@ GLOBAL_CALIBERS = [
     {
         "key": "food_safety_push_date",
         "text": (
-            "食安/预警日期口径：food_safety_alert 与 warning_center 按【推送日期(创建时间 createTime)】"
-            "查询，使用 startDate/endDate 参数（系统推送/生成预警的时间窗口）；不要用 beginDate/endDate"
-            "（会被忽略，导致返回全量历史）。注意 warning_center 当前仍用 startDate/endDate 业务周期口径——"
-            "若用户也要求食安类走推送日期，需同步改 warning_center。"
+            "食安/预警日期口径（两个预警工具已完全统一）：food_safety_alert 与 warning_center 同源于 "
+            "data/earlyWarn/pageAndStat，日期一律用 startDate/endDate（即生产系统「预警中心」界面筛选所用的"
+            "同一参数，对应预警推送/生成时间窗口）；该接口**不认 beginDate/endDate**，误用会被静默忽略、"
+            "返回全量历史（曾导致单日查询返回 9.7 万条）。两个工具在不传日期时均默认取当前自然月，"
+            "避免全量拉取；四态数量均取自 getStatItem 全局聚合（不受分页截断影响）。"
         ),
     },
     {
@@ -217,7 +218,7 @@ METRICS = {
         "formula": AMOUNT_EST_FORMULA,
         "exclusions": None,
         "date_boundary": "range",
-        "aliases": ["趋势", "走势", "按日", "每天变化"],
+        "aliases": ["趋势", "走势", "按日", "每天变化", "每日", "每日采购", "折线图"],
         "scope_note": "继承登录用户 token 的仓库/组织隔离",
         "description": """按日统计【采购数据】的【金额/数量/笔数】趋势序列，用于看随时间变化。默认采购含越库；仅当用户明确说"只要进库的/不含越库"时才将 only_inbound 设为 true。""",
     },
@@ -315,7 +316,8 @@ METRICS = {
         "formula": None,
         "exclusions": None,
         "date_boundary": "range",
-        "aliases": ["采购台账", "采购明细", "哪些商品采购最多", "供应商采购额", "采购分类排行"],
+        "aliases": ["采购台账", "采购明细", "哪些商品采购最多", "供应商采购额", "采购分类排行",
+                    "哪个供应商", "供应商供货"],
         "scope_note": "服务端 subtotal 小计金额准确；仓库过滤仅单仓库（模糊匹配取首个命中）",
         "description": """【采购台账·明细排行】查询某时间段内采购入库的逐笔台账，并给出按商品/供应商/一级分类的采购额(subtotal真实小计)排行 TOP N，以及台账总览(采购总额/采购次数/入库项数/供应商数)。金额准确（服务端 subtotal 小计，非估算）。仓库过滤仅支持单仓库（模糊匹配取首个命中）。用于回答"采购台账/哪些商品采购最多/哪个供应商采购额最高/采购分类排行/采购明细"。""",
     },
@@ -504,16 +506,16 @@ METRICS = {
     "warning_center": {
         "label": "综合预警中心",
         "domain": "warning",
-        "source_interface": "HCGClient.page_early_warn_stat (startDate/endDate 业务周期)",
+        "source_interface": "HCGClient.page_early_warn_stat + get_early_warn_stat_item (startDate/endDate 推送日期)",
         "measures": ["status_count"],
         "dimensions": ["category", "warehouse", "status"],
-        "fixed_filters": {"date_field": "startDate/endDate（业务周期，非推送日期）"},
+        "fixed_filters": {"date_field": "startDate/endDate（推送日期，与生产预警中心筛选同参数）"},
         "formula": None,
         "exclusions": None,
         "date_boundary": "optional",
         "aliases": ["综合预警", "待整改", "预警看板", "证照快到期", "库存过期预警"],
-        "scope_note": "计数/状态口径，无金额；支持 category/status/start_date/end_date/warehouse_name 过滤",
-        "description": """【综合预警中心】查询各类预警（证照到期/库存过期/食安巡检不符合项/采购验收等）的待整改/已整改/已忽略/已确认状态聚合，及按分类、待整改明细 TOP。用于回答"有哪些预警/哪些待整改/证照快到期/库存过期预警/巡检不符合项/预警看板"。支持 category(fs食安/certificate证照/stock仓储/purchase采购/accept验收)、status(0待整改1已整改2已忽略4已确认)、start_date/end_date、warehouse_name 过滤。无金额口径。""",
+        "scope_note": "计数/状态口径，无金额；默认当前自然月；支持 category/status/start_date/end_date/warehouse_name 过滤",
+        "description": """【综合预警中心】查询各类预警（证照到期/库存过期/食安巡检不符合项/采购验收等）的待整改/已整改/已忽略/已确认状态聚合，及按分类、待整改明细 TOP。用于回答"有哪些预警/哪些待整改/证照快到期/库存过期预警/巡检不符合项/预警看板"。日期按**推送日期(startDate/endDate)**查询，与生产系统「预警中心」界面筛选口径一致；不传日期默认当前自然月。支持 category(fs食安/certificate证照/stock仓储/purchase采购/accept验收)、status(0待整改1已整改2已忽略4已确认)、start_date/end_date、warehouse_name 过滤。无金额口径。""",
     },
     "device_alarm_index": {
         "label": "环境设备告警指数",
@@ -553,7 +555,8 @@ METRICS = {
         "formula": "相邻周期环比 = (本期−上期)/上期",
         "exclusions": None,
         "date_boundary": "range",
-        "aliases": ["趋势", "走势", "环比", "同比", "每月对比", "逐月", "X月比Y月"],
+        "aliases": ["趋势", "走势", "环比", "同比", "每月对比", "逐月", "X月比Y月",
+                    "月比", "比上月", "涨了多少", "跌了多少"],
         "scope_note": "复用金额准确的底层工具，金额均来自服务端聚合",
         "description": """【周期对比 / 趋势（问数增强）】把同一个【金额准确的底层工具】在多个周期上分别执行，串成时间序列并自动计算相邻周期环比（差值与百分比）。当用户问「趋势 / 走势 / 比上个月 / 环比 / 同比 / 每月对比 / 上半年走势 / 一季度各月 / 7月比6月多多少 / 近半年采购额变化 / 各月利润对比」时使用本工具。base_tool 可选：purchase_stat（采购统计，主对比指标=采购总额含越库；支持 warehouse_name/supplier_name 过滤）；cost_profit（成本利润，metric=income 收入 / expense 支出 / profit 利润，组织级无仓库过滤）。periods 为周期列表，元素格式支持："YYYY-MM"（自然月）、"YYYY"（自然年）、"YYYY-MM-DD~YYYY-MM-DD"（显式区间）。周期按列表顺序串联。金额均来自服务端聚合，准确非估算。""",
     },
@@ -581,7 +584,8 @@ METRICS = {
         "formula": "超价采购额估算 = 采购单价 × 入库数量",
         "exclusions": None,
         "date_boundary": "optional",
-        "aliases": ["采购价对比", "比平台价高", "买贵了", "超价", "采购价异常"],
+        "aliases": ["采购价对比", "比平台价高", "买贵了", "超价", "采购价异常",
+                    "采购价", "买贵"],
         "scope_note": "金额口径为估算（price×入库数量），回答须注明“估算”；默认当前自然月",
         "description": """【采购价对比】逐笔对比采购单价与平台参考价，找出买贵了的单子（食堂成本把控核心）。当用户问「采购价对比 / 比平台价高多少 / 哪里买贵了 / 超价 / 采购单价 vs 市场价 / 新发地价对比 / 采购价异常」时使用。返回超价统计（超价笔数、超价采购额估算）与明细 TOP（按超出比例降序，含商品/规格/仓库/供应商/采购单价/平台价/超出比例/入库数量）。默认当前自然月；支持 start_date/end_date/warehouse_name 过滤。price×入库数量 为采购额估算，回答须注明「估算」。""",
     },

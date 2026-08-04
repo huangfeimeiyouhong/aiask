@@ -11,13 +11,9 @@ from metrics_registry import build_caliber_spec
 
 GLOSSARY = """
 【业务口径字典】
-- 采购数据：越库(purchaseCrossIn)也是一种采购，统计"采购/采购数据/采购入库"时
-  默认同时计入 purchaseIn(采购入库) 与 purchaseCrossIn(采购越库)，
-  即 stockInTypeList=["purchaseIn","purchaseCrossIn"]。
-  仅当用户明确说"只要进库的/不含越库/仅入库"时，才只取 purchaseIn。
-- 估算金额：接口无金额/小计字段，金额 = 单价(price) × 数量(qty)，为估算值，回答须注明"估算"。
-- 计量单位：斤/只/件/公斤/克/份等，跨单位的数量不可直接相加，涉及数量汇总须说明按单位分别统计。
-- 笔数：一条入库记录算一笔（一单）。
+（说明：越库/估算金额/计量单位/笔数/库存零值剔除/金额准确性优先级 等**通用口径**
+ 统一由本提示词末尾的「业务口径统一说明」权威块给出，来源为口径注册表 metrics_registry，
+ 此处不再重复，避免两处表述漂移。以下只保留【工具选择】与【措辞规范】类指导。）
 - 维度：商品(goods)、仓库(warehouse)、供应商(supplier)。
 - 指标：金额(amount)、数量(qty)、笔数(count)。
   注意措辞：采购/入库/进货相关工具（purchase_inbound_summary、rank_by_dimension、
@@ -25,29 +21,24 @@ GLOSSARY = """
   「估算采购金额」或「采购额」，绝对禁止称为「销售额」；
   出库工具（stock_out_by_warehouse）的 amount 称为「估算出库金额」；
   库存工具（inventory_by_warehouse、inventory_by_category）的 amount 称为「估算库存金额」。
-- 仓库筛选（统一口径）：凡工具清单中标有 warehouse_name 参数的工具都支持「按仓库筛选」，
-  用户输入仓库名（如"上海奥运餐厅"）时，应在对应工具的 args 中带上 "warehouse_name"。
-  支持模糊匹配（含子串即可）；不传则统计全部仓库。采购入库/出库接口用 wareHouseUuid（大写 H），
-  库存接口用 warehouseUuid（小写 h），系统内已统一处理，模型只需给仓库名即可。
+- 仓库筛选（行为要求）：凡工具清单中标有 warehouse_name 参数的工具都支持「按仓库筛选」，
+  用户输入仓库名（如"上海奥运餐厅"）时，必须在对应工具的 args 中带上 "warehouse_name"。
+  （参数名大小写差异由系统统一处理，模型只需给仓库名，详见末尾口径权威块。）
 - 按仓库/分类汇总工具（专门用于"按仓库/按分类汇总"类问题）：
   · inventory_by_warehouse：当前【库存】商品按仓库汇总（库存为时点快照，无需日期）。
   · inventory_by_category：当前【库存】商品按【一级商品分类】汇总占比（qty_ratio 数量占比）。
     【仅用于"当前库存/现有库存/现在库存"语境下的分类占比；若用户问的是采购/入库/进货/出库的分类分析，禁止选此工具】。
   · purchase_inbound_by_warehouse：采购【入库】按仓库汇总（含越库）。
   · stock_out_by_warehouse：出库记录按仓库汇总，并拆分出库类型（如领料出库）。
-  说明（采购越库双向口径）：采购越库(purchaseCrossIn)在【入库】侧记为采购入库的一部分，
-  因此 purchase_inbound_by_warehouse 默认同时统计 purchaseIn 与 purchaseCrossIn；
-  在【出库】侧则归入「领料出库」，不会在出库按类型拆分中单列"采购越库"。
-  库存口径：库存数量为 0 的记录为无效数据，按仓库/按分类汇总时均已剔除（只统计 qty>0）。
-  分类名来自商品分类树（queryGoodsCategory），库存记录本身分类名为空、仅含分类 uuid。
+  （越库双向口径与库存零值剔除口径见末尾权威块；分类名来自商品分类树 queryGoodsCategory，
+   库存记录本身分类名为空、仅含分类 uuid，系统已自动 join。）
 - 采购/入库/出库的"商品分类分析"：使用 rank_by_dimension 工具，dimension='goods_category'（商品一级分类）。
   如"7月采购入库 商品分类分析""各分类采购金额排行""采购品类占比"，都必须选 rank_by_dimension + goods_category，
   而不是 inventory_by_category。
 - 服务端聚合工具（金额准确，首选）：purchase_stat（采购统计区间汇总）、purchase_ledger（采购台账明细排行）、stock_snapshot（进销存库存快照）。
-  这三个工具直接调用后厨管家【报表统计】服务端聚合接口，金额是接口真实返回（含 subtotal 小计、移动加权等），准确且无需翻页估算、不会因数据量大而超时/内存不足。
-  凡涉及「采购额/采购金额/采购总额/入库金额/出库金额/结余/期末库存金额/进销存/库存分类金额/库存按仓库金额」等金额与统计类问题，必须优先使用这三个工具，
-  不要使用旧的翻页明细工具（purchase_inbound_summary / inventory_by_warehouse / inventory_by_category / rank_by_dimension 的采购金额排行场景）做金额汇总——旧工具金额为单价×数量估算值、且可能因数据量大超时。
-  旧翻页工具仅保留用于：需要逐条明细、或新工具未覆盖的极细粒度维度（例如按日趋势 daily_trend、出库按仓库 stock_out_by_warehouse 仍可用，但其金额为估算值须注明）。
+  这三个工具直接调用后厨管家【报表统计】服务端聚合接口，金额是接口真实返回（含 subtotal 小计、移动加权等），无需翻页估算、不会因数据量大而超时/内存不足。
+  凡涉及「采购额/采购金额/采购总额/入库金额/出库金额/结余/期末库存金额/进销存/库存分类金额/库存按仓库金额」等金额与统计类问题，必须优先使用这三个工具。
+  （新旧工具的金额准确性优先级详见末尾口径权威块。）
 - Phase 1 供应链扩展工具（金额准确，服务端聚合/分页聚合）：
   · supplier_settlement（供应商结算统计）：按供应商返回入库总金额/结算总金额/实退总金额，按结算金额排行 TOP N；回答"供应商结算/供应商绩效/各供应商结算金额"。
   · delivery_fulfillment（配送履约与验收差异）：配送履约状态（待分拣/待发货/待验收/已验收）+ 采购金额/入库金额/验收差异金额/报废金额，按供应商/分类/仓库拆分；回答"配送履约/验收差异/配送完成情况"。
@@ -218,11 +209,15 @@ rank_by_dimension / daily_trend 时加 "only_inbound": true。
 """
 
 
-def build_system_prompt():
+def build_system_prompt(recall_hint=""):
     """返回带【当前日期】的动态系统提示词。
 
     真实大模型不知道当前日期，若不告知会把"7月"等相对时间理解成错误年份
     （实测曾误判为 2024）。这里在运行时注入当天日期，让其按当前年份理解。
+
+    recall_hint：可选的「候选工具提示」块（由 semantic_tools.build_recall_hint
+    基于口径注册表 aliases 召回生成）。仅作参考提示注入 system prompt，
+    不改变模型的最终选择权；刻意放在 system 而非 user，避免污染问句原文的意图识别。
     """
     from datetime import date as _d
     today = _d.today()
@@ -234,5 +229,6 @@ def build_system_prompt():
     # 注入口径注册表生成的「业务口径统一说明」权威块：LLM 选工具前先对齐口径，
     # 且口径只有 metrics_registry 一个真相来源（改口径只动注册表，无需改 GLOSSARY/工具函数）。
     caliber_block = "\n\n" + build_caliber_spec()
-    return SYSTEM_PROMPT + date_line + caliber_block
+    hint_block = ("\n\n" + recall_hint) if recall_hint else ""
+    return SYSTEM_PROMPT + date_line + caliber_block + hint_block
 

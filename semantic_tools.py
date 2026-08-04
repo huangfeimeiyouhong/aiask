@@ -2051,19 +2051,21 @@ def warning_center(client, start_date=None, end_date=None, category=None,
                    status=None, warehouse_name=None, top_n=20):
     """综合预警中心：统一查询各类预警（证照到期 / 库存过期 / 食安巡检不符合项 / 采购验收等）。
 
-    接口 earlyWarn/pageAndStat 顶层同时返回四态聚合：waitRectifyQty(待整改)/rectifiedQty(已整改)/
+    接口 earlyWarn/pageAndStat + getStatItem。四态聚合：waitRectifyQty(待整改)/rectifiedQty(已整改)/
     ignoreQty(已忽略)/confirmedQty(已确认)；records 为预警明细（category 分类 / status 状态 /
     content 内容 / warehouseName / createTime / startDate / endDate / handleList 处理记录）。
     category 可选：fs 食安 / certificate 证照 / stock 仓储 / purchase 采购 / accept 验收 等；
     status 可选：0 待整改 / 1 已整改 / 2 已忽略 / 4 已确认。支持日期区间与仓库过滤。
     返回四态聚合 + 按分类分布 + 待整改/未处理明细 TOP。无金额口径。
+
+    日期口径（与 food_safety_alert 完全一致，见 metrics_registry.food_safety_push_date）：
+      - 用 startDate/endDate（生产系统「预警中心」界面筛选所用的同一参数，对应预警推送/生成时间窗口）。
+      - 该接口**不认 beginDate/endDate**，误用会被静默忽略并返回全量历史。
+      - 不传日期默认取当前自然月，避免无区间全量拉取触发数据量保护。
     """
+    sd, ed = (start_date, end_date) if start_date else _default_month_range()
     wh_uuids, wh_filtered = _resolve_warehouse_uuids(client, warehouse_name)
-    params = {"pageNo": 1, "pageSize": 200}
-    if start_date:
-        params["startDate"] = start_date
-    if end_date:
-        params["endDate"] = end_date
+    params = {"startDate": sd, "endDate": ed, "pageNo": 1, "pageSize": 200}
     if category:
         params["category"] = category
     if status is not None:
@@ -2071,7 +2073,6 @@ def warning_center(client, start_date=None, end_date=None, category=None,
     if wh_filtered:
         params["warehouseUuidList"] = wh_uuids
 
-    # 顶层四态聚合字段 → 状态枚举（pageAndStat 顶层已是全局合计，不按页累加）
     _FIELD_TO_STATUS = {"waitRectifyQty": 0, "rectifiedQty": 1, "ignoreQty": 2, "confirmedQty": 4}
     by_category = defaultdict(int)
     pending = []  # 待整改/未处理明细
@@ -2094,16 +2095,33 @@ def warning_center(client, start_date=None, end_date=None, category=None,
 
     first = _iter_pages(client, client.page_early_warn_stat, params, _on,
                         max_records=config.MAX_RECORDS)
-    # 四态聚合直接取自首查顶层（全局合计），避免逐页累加导致翻倍
-    status_agg = {_STATUS_LABEL.get(s, s): int(_num(first.get(fld))) if first else 0
+    # 四态聚合：优先用 getStatItem 全局聚合（不受分页截断影响，与 food_safety_alert 口径一致），
+    # 失败时回退到 pageAndStat 首查顶层字段。stat_params 刻意不带 status，始终返回全局四态。
+    stat_params = {"startDate": sd, "endDate": ed}
+    if category:
+        stat_params["category"] = category
+    if wh_filtered:
+        stat_params["warehouseUuidList"] = wh_uuids
+    try:
+        stat_item = client.get_early_warn_stat_item(stat_params)
+        stat_data = (stat_item.get("data") or {}) if stat_item.get("success") else {}
+    except Exception:
+        stat_data = {}
+    src = stat_data if stat_data else (first or {})
+    status_agg = {_STATUS_LABEL.get(s, s): int(_num(src.get(fld))) if src else 0
                   for fld, s in _FIELD_TO_STATUS.items()}
+    stat_sum = sum(status_agg.values())
+    # total 优先用四态之和（不受分页截断影响），无聚合时回退明细累加
+    if stat_sum:
+        total = stat_sum
     cat_items = sorted(({"category": _CAT_LABEL.get(k, k), "count": v}
                         for k, v in by_category.items()),
                        key=lambda x: x["count"], reverse=True)
     pending.sort(key=lambda x: x["end_date"] or "")
     return {
         "tool": "warning_center",
-        "filters": {"start_date": start_date, "end_date": end_date,
+        "filters": {"start_date": sd, "end_date": ed,
+                    "date_type": "推送日期(startDate/endDate)",
                     "category": _CAT_LABEL.get(category, category) if category else None,
                     "status": _STATUS_LABEL.get(status, status) if status is not None else None,
                     "warehouse_name": warehouse_name},
@@ -2111,9 +2129,10 @@ def warning_center(client, start_date=None, end_date=None, category=None,
         "status_agg": status_agg,
         "by_category": cat_items,
         "pending_top": pending[:top_n],
-        "note": "数据来自 earlyWarn/pageAndStat：category 覆盖 fs食安/certificate证照/stock仓储/purchase采购/"
-                "accept验收；status 0待整改 1已整改 2已忽略 4已确认。四态聚合取自接口顶层全局合计；"
-                "待整改(pending)明细按到期日排序；无金额口径。",
+        "note": "数据来自 earlyWarn/pageAndStat（明细）+ getStatItem（四态聚合），按**推送日期"
+                "(startDate/endDate)**查询，与生产系统「预警中心」筛选口径一致，不传日期默认当前自然月；"
+                "category 覆盖 fs食安/certificate证照/stock仓储/purchase采购/accept验收；"
+                "status 0待整改 1已整改 2已忽略 4已确认。待整改(pending)明细按到期日排序；无金额口径。",
     }
 
 
@@ -3622,6 +3641,97 @@ TOOL_LABELS = {
     "dish_nutrition": "营养 NRV",
     "inquiry_effect": "询比价成效",
 }
+
+
+# ---------------------------------------------------------------------------
+# 意图召回增强（P2）：基于 metrics_registry.METRICS 的 aliases 做关键词召回
+# ---------------------------------------------------------------------------
+# 定位：**辅助提示，不是强制路由**。选工具的最终决策权仍在 LLM，这里只把
+# "问句里出现了哪些已登记的业务说法"整理成候选清单注入 system prompt，
+# 帮助模型在 35 个工具中更快收敛；同时在模型完全没选工具时做一次兜底提示。
+# 别名本身存在跨工具重合（如"趋势"既属 daily_trend 又属 period_compare、
+# "期末库存"既属 stock_snapshot 又属 stock_month_report），故必须返回多候选。
+
+_ALIAS_INDEX = None          # {别名(小写): [工具名, ...]}
+_ALIAS_MIN_LEN = 2           # 太短的别名（如单字）不参与匹配，避免噪声
+_FUZZY_THRESHOLD = 0.6       # 2-gram 覆盖率阈值，用于"证照到期"≈"证照快到期"这类变体
+
+
+def build_alias_index():
+    """构建 别名 → 工具名列表 的倒排索引（含 label 与工具名本身）。"""
+    global _ALIAS_INDEX
+    if _ALIAS_INDEX is not None:
+        return _ALIAS_INDEX
+    idx = defaultdict(list)
+    for name, meta in METRICS.items():
+        terms = list(meta.get("aliases") or [])
+        if meta.get("label"):
+            terms.append(meta["label"])
+        for t in terms:
+            t = (t or "").strip().lower()
+            if len(t) < _ALIAS_MIN_LEN:
+                continue
+            if name not in idx[t]:
+                idx[t].append(name)
+    _ALIAS_INDEX = dict(idx)
+    return _ALIAS_INDEX
+
+
+def _bigrams(s):
+    return {s[i:i + 2] for i in range(len(s) - 1)} if len(s) >= 2 else {s}
+
+
+def recall_tools_by_alias(question, top_k=5):
+    """按别名召回候选工具，返回 [(工具名, 得分, 命中别名), ...]，按得分降序。
+
+    打分：
+      - 精确包含（别名是问句子串）：得分 = 别名长度 × 2（别名越长越具体，越可信）
+      - 模糊命中（别名 2-gram 覆盖率 ≥ 阈值）：得分 = 覆盖率 × 别名长度
+    同一工具多个别名命中时取累加分，但保留最长的那个命中词用于展示。
+    无命中时返回空列表（不硬凑候选）。
+    """
+    q = (question or "").strip().lower()
+    if not q:
+        return []
+    idx = build_alias_index()
+    qg = _bigrams(q)
+    scores = defaultdict(float)
+    hit_term = {}
+    for term, tools in idx.items():
+        if term in q:
+            s = len(term) * 2.0
+        else:
+            tg = _bigrams(term)
+            cover = len(tg & qg) / len(tg) if tg else 0.0
+            if cover < _FUZZY_THRESHOLD:
+                continue
+            # 首 2-gram 必须命中，否则"退货金额"会被"供货金额"这类尾部同形词误召回
+            # （"货金""金额"覆盖 2/3 达阈值，但语义完全不同）。
+            if term[:2] not in qg:
+                continue
+            s = cover * len(term)
+        for t in tools:
+            scores[t] += s
+            if len(term) > len(hit_term.get(t, "")):
+                hit_term[t] = term
+    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    return [(n, round(sc, 2), hit_term.get(n, "")) for n, sc in ranked[:top_k]]
+
+
+def build_recall_hint(question, top_k=5):
+    """把召回候选渲染成注入 system prompt 的提示块；无候选时返回空串。
+
+    刻意写明"仅供参考"，避免模型盲从关键词而忽略问句真实语义。
+    """
+    hits = recall_tools_by_alias(question, top_k=top_k)
+    if not hits:
+        return ""
+    lines = ["【候选工具提示（按问句关键词从口径注册表召回，仅供参考，"
+             "最终必须以问句真实语义为准；若都不合适请选用其它工具）】"]
+    for name, score, term in hits:
+        label = TOOL_LABELS.get(name, name)
+        lines.append(f"- {name}（{label}）← 命中说法「{term}」")
+    return "\n".join(lines)
 
 
 # 带时间区间的工具：若模型漏填日期，统一兜底为「当前自然月（本月1日~今天）」
