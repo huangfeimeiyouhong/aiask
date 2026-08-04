@@ -72,6 +72,10 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
     --shadow-sm: 0 2px 8px rgba(30,50,120,.05);
     --shadow-md: 0 10px 28px rgba(30,50,120,.10);
     --shadow-glow: 0 6px 18px rgba(74,91,255,.28);
+    --globe-ocean-1: #4f8bff;
+    --globe-ocean-2: #2f6bff;
+    --globe-ocean-3: #1e3a8a;
+    --globe-land: #22c55e;
   }
 
   /* ============================================================
@@ -86,6 +90,10 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
     --shadow-sm: 0 2px 10px rgba(0,0,0,.35);
     --shadow-md: 0 12px 30px rgba(0,0,0,.5);
     --shadow-glow: 0 6px 20px rgba(110,168,255,.45);
+    --globe-ocean-1: #60a5fa;
+    --globe-ocean-2: #3b82f6;
+    --globe-ocean-3: #1e3a8a;
+    --globe-land: #4ade80;
   }
   [data-theme="dark"] body::before {
     background:
@@ -156,16 +164,22 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
   .qa-section, .chart-card { opacity: 0; transform: translateY(16px) scale(.992);
             transition: opacity .5s ease, transform .5s ease, box-shadow .2s ease; }
   .qa-section.revealed, .chart-card.revealed { opacity: 1; transform: none; }
-  /* ===== 空状态脉冲光球 ===== */
-  .empty::before { content: ""; display: block; width: 84px; height: 84px; margin: 6px auto 22px;
+  /* ===== 空状态：普通小光球 / 详情区地球 ===== */
+  .empty:not(.globe)::before { content: ""; display: block; width: 84px; height: 84px; margin: 6px auto 22px;
             border-radius: 50%;
             background: radial-gradient(circle at 35% 30%, #9db4ff, #5b3df0 58%, #2f6bff);
             box-shadow: 0 0 30px rgba(74,91,255,.5);
             animation: orb 3.4s ease-in-out infinite; }
   @keyframes orb { 0%,100% { transform: scale(1); box-shadow: 0 0 30px rgba(74,91,255,.45); }
                    50% { transform: scale(1.08); box-shadow: 0 0 50px rgba(124,92,255,.75); } }
-  [data-theme="dark"] .empty::before { background: radial-gradient(circle at 35% 30%, #a78bfa, #6d5cff 58%, #4f8bff);
+  [data-theme="dark"] .empty:not(.globe)::before { background: radial-gradient(circle at 35% 30%, #a78bfa, #6d5cff 58%, #4f8bff);
             box-shadow: 0 0 42px rgba(124,92,255,.7); }
+
+  .globe-wrap { width: 84px; height: 84px; margin: 6px auto 22px;
+            filter: drop-shadow(0 0 18px rgba(74,91,255,.55)); }
+  .globe-wrap .globe-svg { width: 100%; height: 100%; animation: globeSpin 16s linear infinite; }
+  @keyframes globeSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  [data-theme="dark"] .globe-wrap { filter: drop-shadow(0 0 22px rgba(110,168,255,.6)); }
   /* ===== AI 思考中波形点 ===== */
   .think { display: inline-flex; align-items: flex-end; gap: 3px; height: 14px; margin-left: 6px; vertical-align: middle; }
   .think i { width: 3px; height: 5px; border-radius: 2px; background: #fff; opacity: .9;
@@ -628,7 +642,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
         <span class="back" id="backConvBtn">← 返回对话</span>
       </div>
       <div class="detail-body" id="detailBody">
-        <div class="empty">在左侧提出问题，这里会实时展示「分析执行过程」与「回答详情」。提问后点击左侧气泡或右上角「🕘 历史」可回看任意一轮。</div>
+        <div class="empty globe"><div class="globe-wrap"><svg class="globe-svg" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="globeOcean" cx="35%" cy="30%" r="70%"><stop offset="0%" stop-color="var(--globe-ocean-1)"/><stop offset="55%" stop-color="var(--globe-ocean-2)"/><stop offset="100%" stop-color="var(--globe-ocean-3)"/></radialGradient><filter id="globeGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><circle cx="42" cy="42" r="40" fill="url(#globeOcean)" filter="url(#globeGlow)"/><g fill="var(--globe-land)" opacity=".85"><path d="M16,28 Q26,20 38,26 T58,30 T68,42 T58,58 T38,56 T22,46 Z"/><ellipse cx="30" cy="36" rx="9" ry="5"/><ellipse cx="52" cy="50" rx="11" ry="7"/><ellipse cx="66" cy="32" rx="5" ry="9"/><ellipse cx="20" cy="54" rx="7" ry="4"/></g><circle cx="42" cy="42" r="40" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="1"/></svg></div>在左侧提出问题，这里会实时展示「分析执行过程」与「回答详情」。提问后点击左侧气泡或右上角「🕘 历史」可回看任意一轮。</div>
       </div>
     </section>
 
@@ -681,6 +695,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
 const $ = (id) => document.getElementById(id);
 const LS_KEY = "hcg_qa_turns_v1";
 const MAX_TURNS = 50;
+const GLOBE_HTML = `<div class="globe-wrap"><svg class="globe-svg" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="globeOcean" cx="35%" cy="30%" r="70%"><stop offset="0%" stop-color="var(--globe-ocean-1)"/><stop offset="55%" stop-color="var(--globe-ocean-2)"/><stop offset="100%" stop-color="var(--globe-ocean-3)"/></radialGradient><filter id="globeGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><circle cx="42" cy="42" r="40" fill="url(#globeOcean)" filter="url(#globeGlow)"/><g fill="var(--globe-land)" opacity=".85"><path d="M16,28 Q26,20 38,26 T58,30 T68,42 T58,58 T38,56 T22,46 Z"/><ellipse cx="30" cy="36" rx="9" ry="5"/><ellipse cx="52" cy="50" rx="11" ry="7"/><ellipse cx="66" cy="32" rx="5" ry="9"/><ellipse cx="20" cy="54" rx="7" ry="4"/></g><circle cx="42" cy="42" r="40" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="1"/></svg></div>`;
 let conversations = [];   // {id, question, answer, trace, tables, charts, time}
 let activeId = null;
 let viewingId = null;     // 历史单页查看的 id
@@ -789,7 +804,7 @@ function backToConv() {
     const c = conversations.find(x => x.id === activeId);
     if (c) { renderDetail(c); return; }
   }
-  $("detailBody").innerHTML = '<div class="empty">在左侧提出问题，这里会实时展示「分析执行过程」与「回答详情」。</div>';
+  $("detailBody").innerHTML = '<div class="empty globe">' + GLOBE_HTML + '在左侧提出问题，这里会实时展示「分析执行过程」与「回答详情」。</div>';
 }
 
 function clearCharts() {
@@ -1058,7 +1073,7 @@ function clearHistory() {
   conversations.length = 0; activeId = null; viewingId = null; currentDetailConvId = null;
   localStorage.removeItem(LS_KEY);
   rebuildMessages();
-  $("detailBody").innerHTML = '<div class="empty">历史已清空。在左侧提出新问题吧。</div>';
+  $("detailBody").innerHTML = '<div class="empty globe">' + GLOBE_HTML + '历史已清空。在左侧提出新问题吧。</div>';
   $("viewingBanner").classList.remove("show");
   renderHistory();
   api("/api/clear", {}).catch(() => {});
@@ -1253,7 +1268,7 @@ function clearAll() {
   activeId = null; viewingId = null; currentDetailConvId = null;
   localStorage.removeItem(LS_KEY);
   $("messages").innerHTML = "";
-  $("detailBody").innerHTML = '<div class="empty">对话已清空。在左侧提出新问题吧。</div>';
+  $("detailBody").innerHTML = '<div class="empty globe">' + GLOBE_HTML + '对话已清空。在左侧提出新问题吧。</div>';
   $("viewingBanner").classList.remove("show");
   activeTraceEl = null; activeAnswerEl = null; lastSpinnerEl = null;
   api("/api/clear", {}).catch(() => {});
