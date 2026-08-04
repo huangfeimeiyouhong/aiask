@@ -203,6 +203,41 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
   .think i:nth-child(3) { animation-delay: .3s; }
   @keyframes think { 0%,100% { height: 5px; } 50% { height: 14px; } }
 
+  /* ===== 自定义弹窗（替换原生 alert/confirm） ===== */
+  .modal-overlay { position: fixed; inset: 0; z-index: 2000;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(18,24,42,.45); backdrop-filter: blur(4px);
+    opacity: 0; transition: opacity .22s ease; pointer-events: none; }
+  .modal-overlay.show { opacity: 1; pointer-events: auto; }
+  .modal-card { width: 420px; max-width: calc(100vw - 40px);
+    background: rgba(255,255,255,.92); border: 1px solid rgba(227,233,245,.95);
+    border-radius: 18px; box-shadow: 0 22px 60px rgba(20,30,80,.22), 0 0 0 1px rgba(255,255,255,.55) inset;
+    padding: 28px; transform: scale(.92) translateY(10px); transition: transform .22s cubic-bezier(.34,1.56,.64,1); }
+  .modal-overlay.show .modal-card { transform: scale(1) translateY(0); }
+  .modal-icon { width: 48px; height: 48px; border-radius: 50%; margin: 0 auto 16px;
+    display: flex; align-items: center; justify-content: center; font-size: 24px;
+    background: rgba(47,107,255,.1); color: var(--b1); }
+  .modal-icon.warn { background: rgba(255,193,7,.12); color: #e6a700; }
+  .modal-icon.error { background: rgba(239,68,68,.12); color: #ef4444; }
+  .modal-title { text-align: center; font-size: 18px; font-weight: 600; color: var(--ink); margin-bottom: 10px; }
+  .modal-msg { text-align: center; font-size: 14px; line-height: 1.7; color: var(--ink2); }
+  .modal-actions { display: flex; justify-content: center; gap: 12px; margin-top: 24px; }
+  .modal-btn { padding: 10px 22px; border-radius: 10px; border: 1px solid transparent; cursor: pointer;
+    font-size: 14px; transition: all .18s ease; min-width: 88px; text-align: center; }
+  .modal-btn.cancel { background: #f1f4fa; color: var(--ink2); border-color: var(--line); }
+  .modal-btn.cancel:hover { background: #e8ecf6; transform: translateY(-1px); }
+  .modal-btn.confirm { background: linear-gradient(135deg, var(--b1), var(--b2)); color: #fff;
+    box-shadow: 0 4px 14px rgba(47,107,255,.28); }
+  .modal-btn.confirm:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(47,107,255,.36); }
+  .modal-btn.danger { background: linear-gradient(135deg, #ef4444, #f97316); color: #fff;
+    box-shadow: 0 4px 14px rgba(239,68,68,.25); }
+  .modal-btn.danger:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(239,68,68,.34); }
+  [data-theme="dark"] .modal-overlay { background: rgba(0,0,0,.55); }
+  [data-theme="dark"] .modal-card { background: rgba(30,36,58,.92); border-color: rgba(255,255,255,.12);
+    box-shadow: 0 22px 60px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08) inset; }
+  [data-theme="dark"] .modal-btn.cancel { background: rgba(255,255,255,.08); color: var(--ink2); border-color: rgba(255,255,255,.12); }
+  [data-theme="dark"] .modal-btn.cancel:hover { background: rgba(255,255,255,.14); }
+
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -710,6 +745,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
 const $ = (id) => document.getElementById(id);
 const LS_KEY = "hcg_qa_turns_v1";
 const MAX_TURNS = 50;
+
 function buildDataSphereHTML() {
   const svg = `<svg class="sphere-shell" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="sphereGrad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="rgba(255,255,255,.12)"/><stop offset="70%" stop-color="var(--b1)" stop-opacity=".25"/><stop offset="100%" stop-color="var(--b2)" stop-opacity=".55"/></radialGradient></defs><circle cx="42" cy="42" r="40" fill="url(#sphereGrad)" stroke="rgba(255,255,255,.25)" stroke-width="1"/><circle cx="42" cy="42" r="26" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="1"/><circle cx="42" cy="42" r="14" fill="rgba(255,255,255,.08)" stroke="rgba(255,255,255,.2)" stroke-width="1"/><line x1="42" y1="2" x2="42" y2="82" stroke="rgba(255,255,255,.1)"/><line x1="2" y1="42" x2="82" y2="42" stroke="rgba(255,255,255,.1)"/><ellipse cx="42" cy="42" rx="40" ry="12" fill="none" stroke="rgba(255,255,255,.1)" transform="rotate(20 42 42)"/></svg>`;
   const bits = [];
@@ -755,6 +791,52 @@ function fmtDateTime(d) {
 }
 function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+// ----------------------- 自定义弹窗（替换 alert/confirm） -----------------------
+function showModal(type, title, message, options) {
+  options = options || {};
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const iconMap = { info: "ℹ️", warn: "⚠️", error: "❌", confirm: "💬" };
+  const iconClass = type === "warn" ? "warn" : (type === "error" ? "error" : "");
+  const confirmText = options.confirmText || (type === "confirm" ? "确定" : "知道了");
+  const confirmClass = options.danger ? "modal-btn confirm danger" : "modal-btn confirm";
+  const cancelHtml = type === "confirm" ? `<button class="modal-btn cancel" data-action="cancel">取消</button>` : "";
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-icon ${iconClass}">${iconMap[type] || "ℹ️"}</div>
+      <div class="modal-title">${escapeHtml(title)}</div>
+      <div class="modal-msg">${escapeHtml(message)}</div>
+      <div class="modal-actions">
+        ${cancelHtml}
+        <button class="${confirmClass}" data-action="confirm">${escapeHtml(confirmText)}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = (result) => {
+    overlay.classList.remove("show");
+    setTimeout(() => overlay.remove(), 220);
+    if (options.onClose) options.onClose(result);
+  };
+  overlay.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => close(btn.dataset.action === "confirm"));
+  });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(type === "confirm" ? false : undefined); });
+  requestAnimationFrame(() => overlay.classList.add("show"));
+  return close;
+}
+function showAlert(message, opts) {
+  opts = opts || {};
+  showModal(opts.type || "info", opts.title || "提示", message, { confirmText: opts.confirmText || "知道了" });
+}
+function showConfirm(message, onConfirm, opts) {
+  opts = opts || {};
+  showModal("confirm", opts.title || "请确认", message, {
+    confirmText: opts.confirmText || "确定",
+    danger: opts.danger,
+    onClose: (confirmed) => { if (confirmed && onConfirm) onConfirm(); }
+  });
 }
 
 // ----------------------- 历史记录持久化（缓存） -----------------------
@@ -1025,7 +1107,7 @@ function appendChart(body, chart) {
       a.href = url;
       a.download = (chart.title || "chart") + "_" + Date.now() + ".png";
       document.body.appendChild(a); a.click(); a.remove();
-    } catch (e) { alert("导出图片失败：" + e.message); }
+    } catch (e) { showAlert("导出图片失败：" + e.message, { type: "error", title: "导出失败" }); }
   };
 }
 
@@ -1072,7 +1154,7 @@ function downloadBlob(content, filename, mime) {
 }
 function csvCell(s) { s = String(s == null ? "" : s).replace(/"/g, '""'); return '"' + s + '"'; }
 function exportTableCSV(tb) {
-  if (!tb || !tb.columns) { alert("暂无可导出的表格"); return; }
+  if (!tb || !tb.columns) { showAlert("暂无可导出的表格", { title: "导出提示" }); return; }
   const lines = [];
   lines.push(csvCell(tb.title || "表格"));
   lines.push(tb.columns.map(csvCell).join(","));
@@ -1098,14 +1180,15 @@ function renderHistory() {
   });
 }
 function clearHistory() {
-  if (!confirm("确定清空全部本地历史记录？此操作不可恢复。")) return;
-  conversations.length = 0; activeId = null; viewingId = null; currentDetailConvId = null;
-  localStorage.removeItem(LS_KEY);
-  rebuildMessages();
-  $("detailBody").innerHTML = '<div class="empty globe">' + buildDataSphereHTML() + '历史已清空。在左侧提出新问题吧。</div>';
-  $("viewingBanner").classList.remove("show");
-  renderHistory();
-  api("/api/clear", {}).catch(() => {});
+  showConfirm("确定清空全部本地历史记录？此操作不可恢复。", () => {
+    conversations.length = 0; activeId = null; viewingId = null; currentDetailConvId = null;
+    localStorage.removeItem(LS_KEY);
+    rebuildMessages();
+    $("detailBody").innerHTML = '<div class="empty globe">' + buildDataSphereHTML() + '历史已清空。在左侧提出新问题吧。</div>';
+    $("viewingBanner").classList.remove("show");
+    renderHistory();
+    api("/api/clear", {}).catch(() => {});
+  }, { title: "清空历史", confirmText: "清空", danger: true });
 }
 
 // ----------------------- 登录 / 登出 -----------------------
