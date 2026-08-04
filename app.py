@@ -251,6 +251,10 @@ class Handler(BaseHTTPRequestHandler):
         if not token:
             self._redirect("/?sso=missing")
             return
+        # 容错：后厨管家前端可能直接把请求头形式的 "m_<token>" 传过来，
+        # 而 HCGClient 内部会自行拼接 "m_" 前缀，此处剥掉避免双重前缀。
+        if token.startswith("m_"):
+            token = token[2:]
         client = HCGClient(base_url=config.SETTINGS["HCG_BASE_URL"],
                            token=token, data_version=data_version)
         if not client.verify_token():
