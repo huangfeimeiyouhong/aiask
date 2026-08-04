@@ -1392,6 +1392,17 @@ window.addEventListener("resize", () => {
 });
 
 // 进入时：恢复本地历史 + 检查登录态
+function showSsoError() {
+  const p = new URLSearchParams(location.search).get("sso");
+  if (p === "invalid" || p === "missing") {
+    const msg = p === "invalid"
+      ? "单点登录失效，请重新从后厨管家进入，或手动输入账号登录。"
+      : "未检测到单点登录凭证，请重新从后厨管家进入，或手动输入账号登录。";
+    const el = $("loginErr");
+    if (el) el.textContent = msg;
+    history.replaceState({}, "", location.pathname);  // 清掉 URL 参数，避免刷新重复提示
+  }
+}
 loadTurns();
 rebuildMessages();
 applyQuickCollapsed();
@@ -1402,8 +1413,8 @@ updateCreditBadge();
   try {
     const r = await apiGet("/api/me");
     if (r.success) enterApp(r.username);
-    else showLogin();
-  } catch (e) { showLogin(); }
+    else { showLogin(); showSsoError(); }
+  } catch (e) { showLogin(); showSsoError(); }
 })();
 </script>
 </body>

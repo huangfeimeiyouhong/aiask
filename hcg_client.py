@@ -118,6 +118,20 @@ class HCGClient:
             self.data_version = None
         return data
 
+    def verify_token(self) -> bool:
+        """轻量鉴权探测：用当前 token 调一个廉价接口，确认 token 仍有效。
+
+        用于 SSO 回调时校验跳转带过来的 token，避免伪造会话。
+        返回 True 表示 token 有效（接口成功返回）；任何异常或 success=false 均返回 False。
+        """
+        try:
+            r = self.query_warehouses({"pageNo": 1, "pageSize": 1})
+        except Exception:
+            return False
+        if not isinstance(r, dict):
+            return False
+        return bool(r.get("success"))
+
     # ---- 查询类接口（与 server.py 保持一致）----
     def page_stock_in(self, params: dict | None = None) -> dict:
         return self._get("/hcgj-portal/api/wms/stock/pageStockIn", params)

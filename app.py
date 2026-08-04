@@ -21,6 +21,7 @@ import json
 import time
 import threading
 import secrets
+from urllib.parse import urlparse, parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import config
@@ -157,6 +158,11 @@ class Handler(BaseHTTPRequestHandler):
             flags += "; Secure"
         self.send_header("Set-Cookie", f"{COOKIE_NAME}=; {flags}")
 
+    def _redirect(self, loc: str):
+        self.send_response(302)
+        self.send_header("Location", loc)
+        self.end_headers()
+
     # ---- 静态资源（本地化 ECharts 等，避免依赖外网 CDN）----
     def _serve_static(self, path):
         rel = path.lstrip("/")
@@ -190,6 +196,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._send_text("index.html not found", 500)
             return
+        if path == "/sso":
+            self._api_sso()
+            return
         if path == "/api/me":
             self._api_me()
             return
@@ -219,6 +228,40 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, 404)
 
     # ---- 路由实现 ----
+    def _api_sso(self):
+        """单点登录回调：后厨管家登录后跳转过来，URL 带 token（及 username / dataVersion）。
+
+        校验 token 有效性后建立会话并种 HttpOnly Cookie，再 302 跳到问数主页（已登录态）。
+        校验失败或缺少 token 则跳回登录页，并带 sso=invalid / sso=missing 标记供前端提示。
+
+        安全要点：
+          - token 不直接写入会话之外的任何存储；仅在服务端用其向后厨管家接口发请求。
+          - 通过 verify_token() 实测接口成功来确认 token 有效，杜绝伪造会话。
+          - redirect 仅允许同域相对路径，防开放重定向。
+          - 成功后 302 到主页，token 不再停留在地址栏。
+        """
+        q = parse_qs(urlparse(self.path).query)
+        token = (q.get("token") or [None])[0]
+        username = (q.get("username") or [None])[0] or ""
+        data_version = (q.get("dataVersion") or [None])[0]
+        target = (q.get("redirect") or ["/"])[0] or "/"
+        # 防开放重定向：仅允许同域相对路径（不以 // 或 scheme:// 开头）
+        if not target.startswith("/") or target.startswith("//"):
+            target = "/"
+        if not token:
+            self._redirect("/?sso=missing")
+            return
+        client = HCGClient(base_url=config.SETTINGS["HCG_BASE_URL"],
+                           token=token, data_version=data_version)
+        if not client.verify_token():
+            self._redirect("/?sso=invalid")
+            return
+        sid = _create_session(username or "sso-user", token, data_version)
+        self.send_response(302)
+        self._set_cookie(sid)
+        self.send_header("Location", target)
+        self.end_headers()
+
     def _api_login(self):
         d = self._read_json()
         uname = (d.get("username") or "").strip()
