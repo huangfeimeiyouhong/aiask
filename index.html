@@ -73,6 +73,107 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
     --shadow-md: 0 10px 28px rgba(30,50,120,.10);
     --shadow-glow: 0 6px 18px rgba(74,91,255,.28);
   }
+
+  /* ============================================================
+     暗色主题（深空科技感）—— 默认仍为亮色，可一键切换
+     ============================================================ */
+  [data-theme="dark"] {
+    --b1: #6ea8ff; --b2: #a78bfa; --cy: #22d3ee;
+    --ink: #e9edf8; --ink2: #aeb8d8; --ink3: #6f7aa0;
+    --line: #2a3454; --bg: #070b18;
+    --grad: linear-gradient(135deg, #5b8dff, #9d7bff);
+    --grad-soft: linear-gradient(90deg, rgba(91,141,255,.16), rgba(157,123,255,.16));
+    --shadow-sm: 0 2px 10px rgba(0,0,0,.35);
+    --shadow-md: 0 12px 30px rgba(0,0,0,.5);
+    --shadow-glow: 0 6px 20px rgba(110,168,255,.45);
+  }
+  [data-theme="dark"] body::before {
+    background:
+      radial-gradient(680px 460px at 88% -8%, rgba(124,92,255,.32), transparent 62%),
+      radial-gradient(760px 560px at -8% 108%, rgba(47,107,255,.28), transparent 62%),
+      radial-gradient(560px 440px at 55% 118%, rgba(34,211,238,.20), transparent 60%),
+      #070b18;
+  }
+  [data-theme="dark"] body::after { background-image: radial-gradient(rgba(110,168,255,.10) 1px, transparent 1.4px); }
+  [data-theme="dark"] .topbar { background: rgba(15,22,44,.72); border-bottom-color: rgba(42,52,84,.9); }
+  [data-theme="dark"] .chat,
+  [data-theme="dark"] .quick { background: rgba(15,22,44,.55); }
+  [data-theme="dark"] .detail { background: rgba(10,16,34,.35); }
+  [data-theme="dark"] .detail-head { background: rgba(15,22,44,.5); }
+  [data-theme="dark"] .msg.bot { background: #0f1730; }
+  [data-theme="dark"] .qa-section { background: rgba(17,25,48,.92); }
+  [data-theme="dark"] .login-card { background: rgba(18,26,50,.92); }
+  [data-theme="dark"] .alert-panel { background: rgba(18,26,50,.96); }
+  [data-theme="dark"] .history-drawer { background: rgba(18,26,50,.96); }
+  [data-theme="dark"] #alertToast { background: #141d38; }
+  [data-theme="dark"] .login-mask {
+    background:
+      radial-gradient(640px 420px at 85% 0%, rgba(124,92,255,.32), transparent 62%),
+      radial-gradient(720px 520px at 0% 100%, rgba(47,107,255,.30), transparent 62%),
+      radial-gradient(480px 380px at 60% 110%, rgba(34,211,238,.22), transparent 60%),
+      #070b18;
+  }
+  [data-theme="dark"] th { background: linear-gradient(90deg, rgba(91,141,255,.18), rgba(157,123,255,.18)); }
+  [data-theme="dark"] .chart-card .cc-head { background: linear-gradient(90deg, rgba(91,141,255,.12), rgba(157,123,255,.12)); }
+  [data-theme="dark"] .answer { background: linear-gradient(135deg, rgba(91,141,255,.12), rgba(157,123,255,.12)); border-color: var(--line); }
+  [data-theme="dark"] .trace .step .sd { background: rgba(255,255,255,.05); }
+  [data-theme="dark"] .filter-row td { background: rgba(255,255,255,.04); }
+  [data-theme="dark"] .tbl-title { color: #8fb4ff; }
+  [data-theme="dark"] .viewing-banner { background: linear-gradient(90deg, rgba(91,141,255,.18), rgba(157,123,255,.18)); border-bottom-color: #34406a; }
+  [data-theme="dark"] .alert-panel-foot { background: rgba(20,28,52,.6); }
+  [data-theme="dark"] .warn-badge { background: rgba(255,255,255,.06); }
+  [data-theme="dark"] .chat-head .clear,
+  [data-theme="dark"] .samples span,
+  [data-theme="dark"] .inputbar input,
+  [data-theme="dark"] .login-card input,
+  [data-theme="dark"] .tbl-export,
+  [data-theme="dark"] .tbl-adv,
+  [data-theme="dark"] .qchip,
+  [data-theme="dark"] .history-item,
+  [data-theme="dark"] .btn-ghost,
+  [data-theme="dark"] .credit-badge,
+  [data-theme="dark"] .history-drawer .hd .acts span,
+  [data-theme="dark"] .quick-empty { background: rgba(255,255,255,.05); }
+  [data-theme="dark"] .inputbar input,
+  [data-theme="dark"] .login-card input { color: var(--ink); }
+  [data-theme="dark"] .credit-badge { color: #c7d0ea; }
+  [data-theme="dark"] .credit-badge b { color: #8fb4ff; }
+  [data-theme="dark"] .alert-toggle-track { background: #3a4a6e; }
+  [data-theme="dark"] .history-drawer .hd .acts .danger:hover { color: #ff8a8a; border-color: #7a3a3a; }
+
+  /* ===== 极光背景缓慢流动 ===== */
+  @keyframes aurora { 0% { background-position: 0% 0%; } 100% { background-position: 100% 100%; } }
+  /* ===== 按钮水波纹 ===== */
+  .inputbar button, .login-card .btn, .qchip, .samples span, .btn-ghost,
+  .tbl-export, .tbl-adv, .cc-save, .alert-toggle, .quick-toggle, .clear {
+    position: relative; overflow: hidden;
+  }
+  .ripple { position: absolute; border-radius: 50%; transform: scale(0);
+            background: rgba(255,255,255,.55); pointer-events: none; animation: ripple .6s ease-out; }
+  [data-theme="dark"] .ripple { background: rgba(180,200,255,.4); }
+  @keyframes ripple { to { transform: scale(2.4); opacity: 0; } }
+  /* ===== 区块 / 图表滚动进场显隐 ===== */
+  .qa-section, .chart-card { opacity: 0; transform: translateY(16px) scale(.992);
+            transition: opacity .5s ease, transform .5s ease, box-shadow .2s ease; }
+  .qa-section.revealed, .chart-card.revealed { opacity: 1; transform: none; }
+  /* ===== 空状态脉冲光球 ===== */
+  .empty::before { content: ""; display: block; width: 84px; height: 84px; margin: 6px auto 22px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 35% 30%, #9db4ff, #5b3df0 58%, #2f6bff);
+            box-shadow: 0 0 30px rgba(74,91,255,.5);
+            animation: orb 3.4s ease-in-out infinite; }
+  @keyframes orb { 0%,100% { transform: scale(1); box-shadow: 0 0 30px rgba(74,91,255,.45); }
+                   50% { transform: scale(1.08); box-shadow: 0 0 50px rgba(124,92,255,.75); } }
+  [data-theme="dark"] .empty::before { background: radial-gradient(circle at 35% 30%, #a78bfa, #6d5cff 58%, #4f8bff);
+            box-shadow: 0 0 42px rgba(124,92,255,.7); }
+  /* ===== AI 思考中波形点 ===== */
+  .think { display: inline-flex; align-items: flex-end; gap: 3px; height: 14px; margin-left: 6px; vertical-align: middle; }
+  .think i { width: 3px; height: 5px; border-radius: 2px; background: #fff; opacity: .9;
+             animation: think 1s ease-in-out infinite; }
+  .think i:nth-child(2) { animation-delay: .15s; }
+  .think i:nth-child(3) { animation-delay: .3s; }
+  @keyframes think { 0%,100% { height: 5px; } 50% { height: 14px; } }
+
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -83,7 +184,8 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
       radial-gradient(640px 420px at 88% -8%, rgba(124,92,255,.12), transparent 62%),
       radial-gradient(720px 520px at -8% 108%, rgba(47,107,255,.10), transparent 62%),
       radial-gradient(520px 420px at 55% 118%, rgba(6,182,212,.08), transparent 60%),
-      var(--bg); }
+      var(--bg);
+    background-size: 130% 130%; animation: aurora 32s ease-in-out infinite alternate; }
   body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
     background-image: radial-gradient(rgba(47,107,255,.13) 1px, transparent 1.4px);
     background-size: 24px 24px;
@@ -170,7 +272,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
   .qa-section { margin: 18px 0; border: 1px solid #e6ebf6; border-radius: 14px; overflow: hidden;
                 background: rgba(255,255,255,.92); box-shadow: var(--shadow-sm);
                 transition: box-shadow .2s ease; }
-  .qa-section:hover { box-shadow: var(--shadow-md); }
+  .qa-section:hover { box-shadow: var(--shadow-md), 0 0 0 1px rgba(124,92,255,.22), 0 14px 34px rgba(74,91,255,.16); }
   .qa-sec-head { display: flex; align-items: baseline; gap: 12px; padding: 12px 16px;
                  background: var(--grad-soft); border-bottom: 1px solid #e6ebf6; flex-wrap: wrap;
                  position: relative; }
@@ -256,7 +358,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
   /* 图表卡片 + 另存为图片 */
   .chart-card { border: 1px solid #e6ebf6; border-radius: 12px; margin: 10px 0 18px; background: #fff;
                 overflow: hidden; box-shadow: var(--shadow-sm); transition: box-shadow .2s ease; }
-  .chart-card:hover { box-shadow: var(--shadow-md); }
+  .chart-card:hover { box-shadow: var(--shadow-md), 0 0 0 1px rgba(124,92,255,.22), 0 14px 34px rgba(74,91,255,.16); }
   .chart-card .cc-head { display: flex; align-items: center; justify-content: space-between;
                          padding: 8px 12px; border-bottom: 1px solid #eef2fa;
                          background: linear-gradient(90deg, #fbfcff, #fdfbff); }
@@ -469,6 +571,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
            <div class="sub">自然语言查采购 / 库存</div></div>
     </div>
     <div style="display:flex; align-items:center; gap:12px;">
+      <button class="btn-ghost" id="themeBtn">🌙 暗色</button>
       <button class="btn-ghost" id="histBtn">🕘 历史</button>
       <div class="who" id="whoBox" style="display:none;">
         <span class="warn-badge" id="warnBadge" title="点击查看预警中心">
@@ -711,6 +814,7 @@ function renderDetail(c) {
   lastSpinnerEl = null;
   (c.trace || []).forEach(s => appendTraceStep(c, s.stage, s.detail, false));
   renderResult(body, c);
+  observeReveals(body);
   body.scrollTop = 0;
 }
 
@@ -909,6 +1013,7 @@ function finalizeDetail(conv) {
   if (activeAnswerEl) activeAnswerEl.textContent = conv.answer || "（无结论）";
   const body = $("detailBody");
   renderResult(body, conv);
+  observeReveals(body);
   body.scrollTop = $("detailBody").scrollHeight;
 }
 
@@ -1003,7 +1108,7 @@ function updateAlertNav(r) {
   const num = $("warnBadgeNum");
   if (!badge || !num) return;
   const total = (r.total_urgent || 0) + (r.total_warn || 0);
-  num.textContent = total > 99 ? "99+" : String(total);
+  animateCount(num, total, v => v > 99 ? "99+" : String(v));
   badge.classList.toggle("zero", total === 0);
 }
 function renderAlertPanel(r) {
@@ -1163,6 +1268,8 @@ async function doAsk(q) {
   addMsg("user", question);
   const botId = Date.now();
   const botBubble = addMsg("bot", "正在分析并查询…", botId);
+  const _think = document.createElement("span"); _think.className = "think"; _think.innerHTML = "<i></i><i></i><i></i>";
+  botBubble.appendChild(_think);
   const conv = { id: botId, question, answer: "", trace: [], tables: [], charts: [], sections: [], time: Date.now() };
   conversations.push(conv);
   selectConversation(botId);
@@ -1175,6 +1282,7 @@ async function doAsk(q) {
       credentials: "same-origin"
     });
     if (res.status === 401) {
+      const _tk0 = botBubble.querySelector(".think"); if (_tk0) _tk0.remove();
       botBubble.firstChild.textContent = "登录已过期，请重新登录。";
       showLogin();
       return;
@@ -1203,14 +1311,17 @@ async function doAsk(q) {
           conv.sections = ev.sections || conv.sections || [];
           addTokens((ev.usage || {}).total_tokens || 0);
           finalizeDetail(conv);
+          const _tk1 = botBubble.querySelector(".think"); if (_tk1) _tk1.remove();
           botBubble.firstChild.textContent = conv.answer.slice(0, 60) + (conv.answer.length > 60 ? "…" : "");
           saveTurns();
         } else if (ev.type === "error") {
+          const _tk2 = botBubble.querySelector(".think"); if (_tk2) _tk2.remove();
           botBubble.firstChild.textContent = ev.message || "问数失败";
         }
       }
     }
   } catch (e) {
+    const _tk3 = botBubble.querySelector(".think"); if (_tk3) _tk3.remove();
     botBubble.firstChild.textContent = "网络异常，问数中断";
   } finally {
     btn.disabled = false;
@@ -1253,7 +1364,9 @@ function formatCredits(tokens) {
 function updateCreditBadge() {
   const el = $("creditBadge");
   if (!el) return;
-  el.innerHTML = "已消耗 <b>" + formatCredits(loadTokens()) + "</b> 积分";
+  let b = $("creditNum");
+  if (!b) { el.innerHTML = '已消耗 <b id="creditNum">0.00</b> 积分'; b = $("creditNum"); }
+  animateCount(b, loadTokens(), v => (v / 10000).toFixed(2));
 }
 function addTokens(n) {
   if (!n || n <= 0) return;
@@ -1390,6 +1503,70 @@ $("alertToast").onclick = () => {
 window.addEventListener("resize", () => {
   chartInstances.forEach(c => { try { c.resize(); } catch (e) {} });
 });
+
+// ===================== 酷炫增强：主题切换 / 水波纹 / 数字滚动 / 进场显隐 =====================
+const LS_THEME_KEY = "hcg_qa_theme";
+function applyTheme(t) {
+  document.documentElement.setAttribute("data-theme", t);
+  const btn = $("themeBtn");
+  if (btn) btn.innerHTML = t === "dark" ? "☀️ 亮色" : "🌙 暗色";
+  try { localStorage.setItem(LS_THEME_KEY, t); } catch (e) {}
+}
+function initTheme() {
+  let t = "light";
+  try { t = localStorage.getItem(LS_THEME_KEY) || "light"; } catch (e) {}
+  applyTheme(t);
+}
+if ($("themeBtn")) {
+  $("themeBtn").onclick = () => {
+    const cur = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+    applyTheme(cur === "dark" ? "light" : "dark");
+    // 主题切换后重绘图表，确保尺寸与配色正确
+    requestAnimationFrame(() => chartInstances.forEach(c => { try { c.resize(); } catch (e) {} }));
+  };
+}
+// 水波纹：点击主操作按钮时反馈
+document.addEventListener("click", (e) => {
+  const host = e.target.closest(".inputbar button, .login-card .btn, .qchip, .samples span, .btn-ghost, .tbl-export, .tbl-adv, .cc-save, .alert-toggle, .quick-toggle, .clear");
+  if (!host) return;
+  const r = host.getBoundingClientRect();
+  const size = Math.max(r.width, r.height);
+  const sp = document.createElement("span");
+  sp.className = "ripple";
+  sp.style.width = sp.style.height = size + "px";
+  sp.style.left = (e.clientX - r.left - size / 2) + "px";
+  sp.style.top = (e.clientY - r.top - size / 2) + "px";
+  host.appendChild(sp);
+  setTimeout(() => sp.remove(), 620);
+}, true);
+// 数字滚动动画（预警数 / 积分）
+function animateCount(el, to, fmt) {
+  if (!el) return;
+  const from = Number(el.dataset.val || 0);
+  el.dataset.val = to;
+  if (from === to) { el.textContent = fmt(to); return; }
+  const dur = 650, t0 = performance.now();
+  function step(t) {
+    const k = Math.min(1, (t - t0) / dur);
+    const e = 1 - Math.pow(1 - k, 3);
+    el.textContent = fmt(Math.round(from + (to - from) * e));
+    if (k < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+// 进场显隐（IntersectionObserver）
+const revealObs = ("IntersectionObserver" in window)
+  ? new IntersectionObserver((es) => {
+      es.forEach(en => { if (en.isIntersecting) { en.target.classList.add("revealed"); revealObs.unobserve(en.target); } });
+    }, { threshold: .06 })
+  : null;
+function observeReveals(root) {
+  if (!root) return;
+  const els = root.querySelectorAll(".qa-section:not(.revealed), .chart-card:not(.revealed)");
+  if (!revealObs) { els.forEach(el => el.classList.add("revealed")); return; }
+  els.forEach(el => revealObs.observe(el));
+}
+initTheme();
 
 // 进入时：恢复本地历史 + 检查登录态
 function showSsoError() {
