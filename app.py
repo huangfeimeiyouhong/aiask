@@ -212,6 +212,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             self._send_json({"status": "ok"})
             return
+        if path == "/api/warehouses":
+            self._api_warehouses()
+            return
         if path.startswith("/libs/") or path.startswith("/static/"):
             self._serve_static(path)
             return
@@ -228,6 +231,8 @@ class Handler(BaseHTTPRequestHandler):
             self._api_ask()
         elif path == "/api/ask/cancel":
             self._api_ask_cancel()
+        elif path == "/api/ask/rerun":
+            self._api_ask_rerun()
         elif path == "/api/clear":
             self._api_clear()
         else:
@@ -477,6 +482,56 @@ class Handler(BaseHTTPRequestHandler):
             return
         ev.set()
         self._send_json({"success": True, "canceled": True})
+
+    def _api_ask_rerun(self):
+        """P1 联动刷新：只重查单个工具（用新的时间区间/仓库参数），不重新跑整轮 LLM 编排。
+
+        请求体：{ tool_name: str, args: dict }（args 为原工具参数 + 筛选项覆盖）。
+        返回：{ success, tool_name, sections, warnings } —— sections 即该工具重跑后的单节结果，
+        前端用其替换结果页中对应模块的图表/表格。call_tool 内部已按函数签名过滤多余字段，
+        并对日期类工具兜底默认区间，故 args 多传字段无副作用。
+        """
+        s = _get_session(self._cookie_sid())
+        if not s:
+            self._send_json({"success": False,
+                             "message": "未登录或登录已过期，请重新登录"}, 401)
+            return
+        d = self._read_json()
+        name = (d.get("tool_name") or "").strip()
+        args = d.get("args") or {}
+        if not name or name not in st.TOOLS:
+            self._send_json({"success": False, "message": "无效的工具"}, 400)
+            return
+        client = get_client(s)
+        result, err = st.call_tool(client, name, args)
+        if err:
+            self._send_json({"success": False, "message": err})
+            return
+        tool_results = [{"name": name, "args": args, "result": result}]
+        sections, warnings = agent_mod.build_sections(tool_results)
+        self._send_json({"success": True, "tool_name": name,
+                         "sections": sections, "warnings": warnings})
+
+    def _api_warehouses(self):
+        """返回当前用户可见的仓库名称列表，供结果页仓库筛选下拉框使用。"""
+        s = _get_session(self._cookie_sid())
+        if not s:
+            self._send_json({"success": False,
+                             "message": "未登录或登录已过期，请重新登录"}, 401)
+            return
+        client = get_client(s)
+        try:
+            r = client.query_warehouses({})
+        except Exception as e:
+            self._send_json({"success": False, "message": f"获取仓库失败: {e}"})
+            return
+        whs = (r.get("data") or []) if r.get("success") else []
+        names = []
+        for w in whs:
+            n = (w.get("warehouseName") or w.get("name") or "").strip()
+            if n:
+                names.append(n)
+        self._send_json({"success": True, "warehouses": names})
 
     def _api_clear(self):
         s = _get_session(self._cookie_sid())

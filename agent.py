@@ -10,9 +10,11 @@ Agent 编排 —— 「意图 → 工具调用 → 真实数据 → 自然语言
 
 import json
 import re
+from datetime import date
 from semantic_layer import build_system_prompt
 from semantic_tools import (call_tool, TOOLS, TOOL_LABELS,
-                            build_recall_hint, recall_tools_by_alias)
+                            build_recall_hint, recall_tools_by_alias,
+                            _DATE_TOOLS, _default_month_range)
 
 
 def _extract_tool_call(text: str):
@@ -1630,6 +1632,48 @@ def _chart_has_data(option):
     return False
 
 
+def _derive_filters(t):
+    """从工具签名推导该模块支持的可联动筛选器（日期区间 / 单日 / 仓库）。
+
+    用于结果页「声明式筛选器联动刷新」（P1）：在对应结果卡片上渲染筛选控件，
+    用户改时间区间 / 仓库后只重查这一个工具，不重新跑整轮 LLM 编排。
+    每个筛选器带 param（写回 args 的字段名）+ 当前生效值，前端据此构造重查参数。
+    """
+    import inspect
+    name = t["name"]
+    fn = TOOLS.get(name)
+    if not fn:
+        return []
+    params = set(inspect.signature(fn).parameters)
+    args = t.get("args") or {}
+    filters = []
+    # 日期区间（start_date + end_date）
+    if "start_date" in params and "end_date" in params:
+        if name in _DATE_TOOLS:
+            sd0, ed0 = _default_month_range()
+            sd = args.get("start_date") or sd0
+            ed = args.get("end_date") or ed0
+        else:
+            sd = args.get("start_date")
+            ed = args.get("end_date")
+        filters.append({"type": "date", "start_param": "start_date",
+                        "end_param": "end_date", "start": sd, "end": ed})
+    # 单日（report_date 或 date_）：库存月报/快照/成本利润等时点类
+    single = None
+    if "report_date" in params:
+        single = "report_date"
+    elif "date_" in params:
+        single = "date_"
+    if single and "start_date" not in params:
+        val = args.get(single) or date.today().strftime("%Y-%m-%d")
+        filters.append({"type": "date_single", "param": single, "value": val})
+    # 仓库（多数工具可选；部分工具强制必填，缺失时由工具内 guard 友好拦截）
+    if "warehouse_name" in params:
+        filters.append({"type": "warehouse", "param": "warehouse_name",
+                        "value": args.get("warehouse_name") or ""})
+    return filters
+
+
 def build_sections(tool_results):
     """把工具结果按模块（调用）分节，每节内表格与图表交错（zip）搭配展示。
 
@@ -1648,13 +1692,21 @@ def build_sections(tool_results):
     """
     sections = []
     warnings = []
+    seen = {}
     for t in tool_results:
         name = t["name"]
         r = t["result"]
         label = TOOL_LABELS.get(name, name)
         summary = _summarize_result(name, r)
+        # P1 联动筛选：为每个模块生成稳定 key（同名工具多次调用则加 #n 区分）
+        # 并携带原始 args 与可调筛选器，供前端声明式筛选器重查使用。
+        n = seen.get(name, 0)
+        seen[name] = n + 1
+        key = name if n == 0 else f"{name}#{n}"
+        base = {"tool": name, "key": key, "args": t.get("args") or {},
+                "filters": _derive_filters(t)}
         if r.get("error") or r.get("too_large"):
-            sections.append({"module": label, "summary": summary, "blocks": []})
+            sections.append({**base, "module": label, "summary": summary, "blocks": []})
             continue
         # 防御：单工具结果结构异常（如字段缺失 KeyError）不应拖垮整轮，
         # 降级为告警并跳过该模块的图表（对应 Omega "规则能修的不让模型重写"）。
@@ -1663,7 +1715,7 @@ def build_sections(tool_results):
             ch = build_charts([t])
         except Exception as e:
             warnings.append(f"{label}：结果结构异常，图表已降级（{e}）")
-            sections.append({"module": label, "summary": summary, "blocks": []})
+            sections.append({**base, "module": label, "summary": summary, "blocks": []})
             continue
         if not tb and not ch:
             continue
@@ -1685,5 +1737,5 @@ def build_sections(tool_results):
         blocks = clean
         if not blocks:
             continue
-        sections.append({"module": label, "summary": summary, "blocks": blocks})
+        sections.append({**base, "module": label, "summary": summary, "blocks": blocks})
     return sections, warnings

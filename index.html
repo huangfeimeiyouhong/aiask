@@ -370,6 +370,23 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
   .qa-section .tbl-tools { margin: 8px 16px 0; }
   .qa-section table { margin: 10px 16px 6px; width: calc(100% - 32px); }
   .qa-section .chart-card { margin: 14px 16px; }
+  /* P1 联动筛选器条 */
+  .qa-sec-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+                   padding: 9px 16px; background: rgba(124,92,255,.05); border-bottom: 1px solid #eef1f8; }
+  .flt-label { font-size: 12.5px; color: var(--ink2); font-weight: 600; }
+  .flt-date, .flt-select { font-size: 12.5px; color: var(--ink); border: 1px solid var(--line);
+                   border-radius: 8px; padding: 4px 8px; background: #fff; outline: none;
+                   transition: border-color .15s ease, box-shadow .15s ease; }
+  .flt-date:focus, .flt-select:focus { border-color: #b9c8ff; box-shadow: 0 0 0 3px rgba(47,107,255,.12); }
+  .flt-apply { font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; border: none; border-radius: 8px;
+                   padding: 5px 13px; background: linear-gradient(120deg, #2f6bff, #7c5cff);
+                   box-shadow: 0 4px 14px rgba(74,91,255,.28); transition: transform .15s ease, box-shadow .15s ease; }
+  .flt-apply:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(74,91,255,.38); }
+  .qa-rerun-loading { margin: 18px 16px; padding: 18px; text-align: center; color: var(--ink2); font-size: 13px;
+                   border: 1px dashed #d6def5; border-radius: 12px; background: rgba(124,92,255,.04); }
+  [data-theme="dark"] .qa-sec-filter { background: rgba(124,92,255,.12); border-bottom-color: rgba(255,255,255,.08); }
+  [data-theme="dark"] .flt-date, [data-theme="dark"] .flt-select { background: rgba(13,20,40,.9); color: var(--ink); border-color: rgba(255,255,255,.12); }
+  [data-theme="dark"] .qa-rerun-loading { border-color: rgba(255,255,255,.12); background: rgba(124,92,255,.08); }
   /* 执行过程时间线（流式） */
   .trace { border-left: 2px solid #dbe4fa; margin-left: 6px; padding-left: 16px; }
   .trace .step { position: relative; margin: 12px 0; animation: pop .2s ease; }
@@ -1139,8 +1156,15 @@ function renderResult(body, c) {
     (c.charts || []).forEach(ch => appendChart(body, ch));
   }
 }
+function appendBlock(container, b) {
+  if (b.type === "chart") appendChart(container, b);
+  else if (b.type === "note") { const n = document.createElement("div"); n.className = "qa-note"; n.textContent = b.text; container.appendChild(n); }
+  else appendTable(container, b);
+}
+
 function appendSection(body, sec) {
   const wrap = document.createElement("div"); wrap.className = "qa-section";
+  wrap.dataset.secKey = sec.key || sec.tool || sec.module || "sec";
   const head = document.createElement("div"); head.className = "qa-sec-head";
   const title = document.createElement("div"); title.className = "qa-sec-title"; title.textContent = sec.module || "分析结果";
   head.appendChild(title);
@@ -1149,12 +1173,121 @@ function appendSection(body, sec) {
     head.appendChild(sum);
   }
   wrap.appendChild(head);
-  (sec.blocks || []).forEach(b => {
-    if (b.type === "chart") appendChart(wrap, b);
-    else if (b.type === "note") { const n = document.createElement("div"); n.className = "qa-note"; n.textContent = b.text; wrap.appendChild(n); }
-    else appendTable(wrap, b);
-  });
+  // P1 声明式联动筛选器：时间区间 / 单日 / 仓库，改后只重查本模块工具，不重跑整轮编排
+  if (sec.filters && sec.filters.length) {
+    wrap.appendChild(buildFilterBar(sec));
+  }
+  const bodyWrap = document.createElement("div"); bodyWrap.className = "qa-sec-body";
+  wrap.appendChild(bodyWrap);
+  (sec.blocks || []).forEach(b => appendBlock(bodyWrap, b));
   body.appendChild(wrap);
+}
+
+// 用新 section 替换某结果卡片内容区（联动刷新后），并回收其中的图表实例
+function renderSectionBody(wrap, sec) {
+  const bodyWrap = wrap.querySelector(".qa-sec-body");
+  if (!bodyWrap) return;
+  disposeChartsIn(bodyWrap);
+  bodyWrap.innerHTML = "";
+  (sec.blocks || []).forEach(b => appendBlock(bodyWrap, b));
+  observeReveals(bodyWrap);
+}
+
+// 仅销毁 container 内的 echarts 实例（不影响页面其他图表）
+function disposeChartsIn(container) {
+  if (!container || typeof echarts === "undefined") return;
+  for (let i = chartInstances.length - 1; i >= 0; i--) {
+    const inst = chartInstances[i];
+    try { if (container.contains(inst.getDom())) { inst.dispose(); chartInstances.splice(i, 1); } } catch (e) {}
+  }
+}
+
+// ----------------------- P1 联动筛选器 -----------------------
+function makeFltLabel(text) {
+  const l = document.createElement("span"); l.className = "flt-label"; l.textContent = text; return l;
+}
+function makeApplyBtn() {
+  const b = document.createElement("button"); b.className = "flt-apply"; b.textContent = "刷新"; return b;
+}
+
+let _warehouseNames = null;
+async function loadWarehouseNames() {
+  if (_warehouseNames) return _warehouseNames;
+  try {
+    const r = await apiGet("/api/warehouses");
+    if (r && r.success) _warehouseNames = r.warehouses || [];
+  } catch (e) {}
+  return _warehouseNames || [];
+}
+
+function buildFilterBar(sec) {
+  const bar = document.createElement("div"); bar.className = "qa-sec-filter";
+  sec.filters.forEach(f => {
+    if (f.type === "date") {
+      bar.appendChild(makeFltLabel("时间区间"));
+      const s = document.createElement("input"); s.type = "date"; s.className = "flt-date"; s.dataset.param = f.start_param; if (f.start) s.value = f.start;
+      const e = document.createElement("input"); e.type = "date"; e.className = "flt-date"; e.dataset.param = f.end_param; if (f.end) e.value = f.end;
+      bar.appendChild(s); bar.appendChild(document.createTextNode(" 至 ")); bar.appendChild(e);
+      const apply = makeApplyBtn();
+      apply.onclick = () => rerunSection(sec, { [f.start_param]: s.value, [f.end_param]: e.value });
+      bar.appendChild(apply);
+    } else if (f.type === "date_single") {
+      bar.appendChild(makeFltLabel("日期"));
+      const d = document.createElement("input"); d.type = "date"; d.className = "flt-date"; d.dataset.param = f.param; if (f.value) d.value = f.value;
+      bar.appendChild(d);
+      const apply = makeApplyBtn();
+      apply.onclick = () => rerunSection(sec, { [f.param]: d.value });
+      bar.appendChild(apply);
+    } else if (f.type === "warehouse") {
+      bar.appendChild(makeFltLabel("仓库"));
+      const sel = document.createElement("select"); sel.className = "flt-select"; sel.dataset.param = f.param;
+      const opt0 = document.createElement("option"); opt0.value = ""; opt0.textContent = "（全部仓库）"; sel.appendChild(opt0);
+      bar.appendChild(sel);
+      // 异步填充仓库列表（已从服务端缓存则瞬时返回）
+      loadWarehouseNames().then(names => {
+        (names || []).forEach(n => {
+          const o = document.createElement("option"); o.value = n; o.textContent = n;
+          if (n === f.value) o.selected = true;
+          sel.appendChild(o);
+        });
+      });
+      sel.onchange = () => rerunSection(sec, { [f.param]: sel.value });
+    }
+  });
+  return bar;
+}
+
+function rerunSection(sec, overrides) {
+  const wrap = document.querySelector('.qa-section[data-sec-key="' + sec.key + '"]');
+  if (!wrap) return;
+  const bodyWrap = wrap.querySelector(".qa-sec-body");
+  const oldHtml = bodyWrap.innerHTML;
+  bodyWrap.innerHTML = '<div class="qa-rerun-loading">⏳ 重新查询中…</div>';
+  const args = Object.assign({}, sec.args || {}, overrides);
+  api("/api/ask/rerun", { tool_name: sec.tool, args }).then(res => {
+    if (!res || !res.success) {
+      showAlert((res && res.message) || "刷新失败", { type: "error", title: "刷新失败" });
+      bodyWrap.innerHTML = oldHtml;
+      return;
+    }
+    const newSec = (res.sections && res.sections[0]) || sec;
+    newSec.key = sec.key; newSec.tool = sec.tool; newSec.filters = sec.filters;
+    sec.args = args; // 后续联动基于新基线
+    renderSectionBody(wrap, newSec);
+    const bar = wrap.querySelector(".qa-sec-filter");
+    if (bar) updateFilterBarValues(bar, args);
+  }).catch(e => {
+    showAlert("刷新失败：" + e.message, { type: "error", title: "刷新失败" });
+    bodyWrap.innerHTML = oldHtml;
+  });
+}
+
+function updateFilterBarValues(bar, args) {
+  bar.querySelectorAll("[data-param]").forEach(el => {
+    const p = el.dataset.param;
+    if (p === "warehouse_name") el.value = args[p] != null ? args[p] : "";
+    else if (args[p] != null && args[p] !== "") el.value = args[p];
+  });
 }
 
 function renderChartWarnings(body, conv) {
@@ -1398,6 +1531,7 @@ async function showAlertDetailInline(a) {
           conv.tables = ev.tables || [];
           conv.charts = ev.charts || [];
           conv.sections = ev.sections || conv.sections || [];
+          conv.tool_results = ev.tool_results || conv.tool_results || [];
           conv.chart_warnings = ev.chart_warnings || [];
           addTokens((ev.usage || {}).total_tokens || 0);
         } else if (ev.type === "error") { conv.answer = ev.message || "加载失败"; }
@@ -1492,6 +1626,7 @@ async function doAsk(q) {
           conv.tables = ev.tables || [];
           conv.charts = ev.charts || [];
           conv.sections = ev.sections || conv.sections || [];
+          conv.tool_results = ev.tool_results || conv.tool_results || [];
           conv.chart_warnings = ev.chart_warnings || [];
           addTokens((ev.usage || {}).total_tokens || 0);
           finalizeDetail(conv); conv._finalized = true;
