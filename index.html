@@ -238,6 +238,24 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
   [data-theme="dark"] .modal-btn.cancel { background: rgba(255,255,255,.08); color: var(--ink2); border-color: rgba(255,255,255,.12); }
   [data-theme="dark"] .modal-btn.cancel:hover { background: rgba(255,255,255,.14); }
 
+  /* ===== 图表校验提示条 + 区块内 note 提示 ===== */
+  .chart-warn { margin: 14px 0; padding: 10px 14px; border-radius: 10px;
+    background: linear-gradient(135deg, rgba(255,193,7,.12), rgba(255,193,7,.06));
+    border: 1px solid rgba(230,167,0,.35); color: #8a6d00; font-size: 13px; line-height: 1.6; }
+  .chart-warn b { color: #6b5300; }
+  .qa-note { margin: 10px 16px 14px; padding: 8px 12px; border-radius: 8px;
+    background: rgba(47,107,255,.06); border: 1px dashed rgba(47,107,255,.28);
+    color: var(--ink3); font-size: 12.5px; }
+  [data-theme="dark"] .chart-warn { background: linear-gradient(135deg, rgba(255,193,7,.16), rgba(255,193,7,.08));
+    border-color: rgba(230,167,0,.45); color: #ffd766; }
+  [data-theme="dark"] .chart-warn b { color: #ffe39a; }
+  [data-theme="dark"] .qa-note { background: rgba(110,168,255,.1); border-color: rgba(110,168,255,.3); color: var(--ink3); }
+
+  /* 发送中按钮变为"停止"（可取消，对应运行时契约：可取消） */
+  #askBtn.stopping { background: linear-gradient(135deg, #ef4444, #f97316); color: #fff;
+    box-shadow: 0 4px 14px rgba(239,68,68,.32); }
+  #askBtn.stopping:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(239,68,68,.4); }
+
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -940,6 +958,7 @@ function renderDetail(c) {
   lastSpinnerEl = null;
   (c.trace || []).forEach(s => appendTraceStep(c, s.stage, s.detail, false));
   renderResult(body, c);
+  renderChartWarnings(body, c);
   observeReveals(body);
   body.scrollTop = 0;
 }
@@ -1130,8 +1149,23 @@ function appendSection(body, sec) {
     head.appendChild(sum);
   }
   wrap.appendChild(head);
-  (sec.blocks || []).forEach(b => { if (b.type === "chart") appendChart(wrap, b); else appendTable(wrap, b); });
+  (sec.blocks || []).forEach(b => {
+    if (b.type === "chart") appendChart(wrap, b);
+    else if (b.type === "note") { const n = document.createElement("div"); n.className = "qa-note"; n.textContent = b.text; wrap.appendChild(n); }
+    else appendTable(wrap, b);
+  });
   body.appendChild(wrap);
+}
+
+function renderChartWarnings(body, conv) {
+  const old = body.querySelector(".chart-warn"); if (old) old.remove();
+  const ws = conv.chart_warnings || [];
+  if (!ws.length) return;
+  const bar = document.createElement("div"); bar.className = "chart-warn";
+  bar.innerHTML = "⚠️ <b>图表校验提示</b>：" + ws.map(escapeHtml).join("；");
+  const first = body.querySelector(".section-title");
+  if (first) body.insertBefore(bar, first);
+  else body.insertBefore(bar, body.firstChild);
 }
 
 function finalizeDetail(conv) {
@@ -1139,6 +1173,7 @@ function finalizeDetail(conv) {
   if (activeAnswerEl) activeAnswerEl.textContent = conv.answer || "（无结论）";
   const body = $("detailBody");
   renderResult(body, conv);
+  renderChartWarnings(body, conv);
   observeReveals(body);
   body.scrollTop = $("detailBody").scrollHeight;
 }
@@ -1363,6 +1398,7 @@ async function showAlertDetailInline(a) {
           conv.tables = ev.tables || [];
           conv.charts = ev.charts || [];
           conv.sections = ev.sections || conv.sections || [];
+          conv.chart_warnings = ev.chart_warnings || [];
           addTokens((ev.usage || {}).total_tokens || 0);
         } else if (ev.type === "error") { conv.answer = ev.message || "加载失败"; }
       }
@@ -1386,18 +1422,37 @@ function clearAll() {
   api("/api/clear", {}).catch(() => {});
 }
 
+// 进行中的问数任务（用于停止 / 取消传播，对应 Omega "运行时契约：可取消"）
+let currentAbort = null;
+let currentTaskId = null;
+function stopAsk(taskId, controller) {
+  try { controller.abort(); } catch (e) {}
+  if (taskId) fetch("/api/ask/cancel", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_id: taskId }), credentials: "same-origin"
+  }).catch(() => {});
+}
+
 async function doAsk(q) {
   const question = (q || $("question").value).trim();
   if (!question) return;
   $("question").value = "";
   recordUsage(question);
-  const btn = $("askBtn"); btn.disabled = true;
+  const btn = $("askBtn");
+  // 若上一轮问数仍在进行，先中止它（避免叠加）
+  if (currentAbort) { try { stopAsk(currentTaskId, currentAbort); } catch (e) {} }
+  const taskId = "t" + Date.now() + Math.random().toString(36).slice(2, 7);
+  const controller = new AbortController();
+  currentAbort = controller; currentTaskId = taskId;
+  // 发送期间按钮变为"停止"，点击即取消（取消信号同时传到后端）
+  btn.textContent = "停止"; btn.disabled = false; btn.classList.add("stopping");
+  btn.onclick = () => stopAsk(taskId, controller);
   addMsg("user", question);
   const botId = Date.now();
   const botBubble = addMsg("bot", "正在分析并查询…", botId);
   const _think = document.createElement("span"); _think.className = "think"; _think.innerHTML = "<i></i><i></i><i></i>";
   botBubble.appendChild(_think);
-  const conv = { id: botId, question, answer: "", trace: [], tables: [], charts: [], sections: [], time: Date.now() };
+  const conv = { id: botId, question, answer: "", trace: [], tables: [], charts: [], sections: [], time: Date.now(), _finalized: false };
   conversations.push(conv);
   selectConversation(botId);
 
@@ -1405,7 +1460,8 @@ async function doAsk(q) {
     const res = await fetch("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, task_id: taskId }),
+      signal: controller.signal,
       credentials: "same-origin"
     });
     if (res.status === 401) {
@@ -1436,11 +1492,16 @@ async function doAsk(q) {
           conv.tables = ev.tables || [];
           conv.charts = ev.charts || [];
           conv.sections = ev.sections || conv.sections || [];
+          conv.chart_warnings = ev.chart_warnings || [];
           addTokens((ev.usage || {}).total_tokens || 0);
-          finalizeDetail(conv);
+          finalizeDetail(conv); conv._finalized = true;
           const _tk1 = botBubble.querySelector(".think"); if (_tk1) _tk1.remove();
           botBubble.firstChild.textContent = conv.answer.slice(0, 60) + (conv.answer.length > 60 ? "…" : "");
           saveTurns();
+        } else if (ev.type === "canceled") {
+          const _tkc = botBubble.querySelector(".think"); if (_tkc) _tkc.remove();
+          botBubble.firstChild.textContent = "已停止（保留已生成内容）";
+          finalizeDetail(conv); conv._finalized = true;
         } else if (ev.type === "error") {
           const _tk2 = botBubble.querySelector(".think"); if (_tk2) _tk2.remove();
           botBubble.firstChild.textContent = ev.message || "问数失败";
@@ -1449,9 +1510,17 @@ async function doAsk(q) {
     }
   } catch (e) {
     const _tk3 = botBubble.querySelector(".think"); if (_tk3) _tk3.remove();
-    botBubble.firstChild.textContent = "网络异常，问数中断";
+    if (e && e.name === "AbortError") {
+      // 用户主动停止：保留已生成内容（trace / 已读数据），不抹掉半成结果
+      if (!conv._finalized) { finalizeDetail(conv); conv._finalized = true; }
+      botBubble.firstChild.textContent = "已停止（保留已生成内容）";
+    } else {
+      botBubble.firstChild.textContent = "网络异常，问数中断";
+    }
   } finally {
-    btn.disabled = false;
+    btn.textContent = "发送"; btn.disabled = false; btn.classList.remove("stopping");
+    btn.onclick = () => doAsk();
+    currentAbort = null; currentTaskId = null;
   }
 }
 

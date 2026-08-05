@@ -238,7 +238,7 @@ def run_agent(client, question: str, llm, prior=None, max_iter: int = 3):
     return {"answer": "", "tool_results": [], "trace": [], "tables": []}
 
 
-def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3):
+def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3, cancel_event=None):
     """流式编排：逐个 yield 执行步骤事件，最后 yield 一个 done 事件。
 
     事件格式：
@@ -273,6 +273,12 @@ def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3):
     retried_with_hint = False
 
     for i in range(max_iter):
+        # 运行时契约（对应 Omega "可取消"）：用户点停止后置位的 cancel_event 一旦触发，
+        # 立即收尾并保留已生成内容（trace / 已读取的工具结果），不继续浪费 LLM/查询。
+        if cancel_event and cancel_event.is_set():
+            yield {"type": "canceled", "message": "已停止",
+                   "trace": trace, "tool_results": tool_results}
+            return
         # 多轮上下文只在「基于工具结果生成最终结论」时注入，避免上下文中的
         # "排行/TOP/柱状图"等关键词污染当前问题的意图识别（对 MockLLM 尤其重要）。
         if i > 0 and context_note and tool_results:
@@ -301,6 +307,10 @@ def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3):
             yield {"type": "step", "stage": "调用接口",
                    "detail": f"正在调用 {label}（{call['name']}），向后厨管家真实接口逐页拉取数据…"}
             result, err = call_tool(client, call["name"], call["args"])
+            if cancel_event and cancel_event.is_set():
+                yield {"type": "canceled", "message": "已停止",
+                       "trace": trace, "tool_results": tool_results}
+                return
             if err:
                 history.append({"Role": "tool",
                                 "Content": json.dumps({"error": err}, ensure_ascii=False)})
@@ -319,7 +329,8 @@ def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3):
                 trace.append({"stage": "生成结论", "detail": "区间数据量过大，返回友好提示而非全量结果"})
                 yield {"type": "step", "stage": "生成结论", "detail": "区间数据量过大，返回友好提示而非全量结果"}
                 yield {"type": "done", "answer": answer, "tables": [], "charts": [],
-                       "trace": trace, "tool_results": tool_results, "usage": total_usage}
+                       "trace": trace, "tool_results": tool_results, "usage": total_usage,
+                       "chart_warnings": []}
                 return
             user_msg = ("请严格基于上面的工具真实返回数据，用简洁中文回答用户的问题，"
                         "并引用关键数字；若数据不足请如实说明。不要编造。")
@@ -347,7 +358,11 @@ def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3):
     trace.append({"stage": "生成结论", "detail": "基于上述接口真实返回数据，整理自然语言结论"})
     yield {"type": "step", "stage": "生成结论", "detail": "基于上述接口真实返回数据，整理自然语言结论"}
     # 按模块分节：每节内表格与图表交错（zip），搭配展示，适合领导查看
-    sections = build_sections(tool_results)
+    # 生成后确定性校验（Harness 思想）：空图降级为提示、单工具异常不拖垮整轮
+    sections, chart_warnings = build_sections(tool_results)
+    if chart_warnings:
+        trace.append({"stage": "图表校验", "detail": "；".join(chart_warnings)})
+        yield {"type": "step", "stage": "图表校验", "detail": "；".join(chart_warnings)}
     tables = []
     charts = []
     for s in sections:
@@ -355,7 +370,8 @@ def run_agent_stream(client, question: str, llm, prior=None, max_iter: int = 3):
             d = {k: v for k, v in b.items() if k != "type"}
             (tables if b["type"] == "table" else charts).append(d)
     yield {"type": "done", "answer": answer, "tables": tables, "charts": charts,
-           "sections": sections, "trace": trace, "tool_results": tool_results, "usage": total_usage}
+           "sections": sections, "trace": trace, "tool_results": tool_results,
+           "usage": total_usage, "chart_warnings": chart_warnings}
 
 
 def build_tables(tool_results):
@@ -1593,19 +1609,45 @@ def build_charts(tool_results):
     return charts
 
 
+def _chart_has_data(option):
+    """Harness 校验：图表 option 是否真的含有可绘制数据。
+
+    对应 Omega 的"图表读取字段能否与返回对齐"校验——防止生成空白图
+    （如 series.data 全为 None）。值 0 视为有数据，只有全 None/空才判空。
+    """
+    if not option or not isinstance(option, dict):
+        return False
+    series = option.get("series") or []
+    if not series:
+        return False
+    for s in series:
+        d = s.get("data") if isinstance(s, dict) else None
+        if isinstance(d, list):
+            if any(x is not None for x in d):
+                return True
+        elif d is not None:
+            return True
+    return False
+
+
 def build_sections(tool_results):
     """把工具结果按模块（调用）分节，每节内表格与图表交错（zip）搭配展示。
 
-    返回结构：
+    返回 (sections, warnings)：
+      - sections：见下结构；空图会降级为 note 提示，绝不输出空白图。
+      - warnings：图表层校验告警列表（如某图因数据为空未生成、某工具结构异常降级）。
+    这是生成后的确定性校验层（Harness 思想），不依赖模型重写。
         [{"module": <模块中文名>, "summary": <单行结论>, "blocks": [
             {"type": "table", "title":..., "columns":..., "rows":...},
             {"type": "chart", "title":..., "option":...},
+            {"type": "note", "text":...},
             ...
         ]}, ...]
     blocks 的顺序为该模块「表→图→表→图」交替，使明细表与其可视化紧邻，
     便于领导阅读。前端优先用 sections 渲染；无 sections 时回退 tables/charts。
     """
     sections = []
+    warnings = []
     for t in tool_results:
         name = t["name"]
         r = t["result"]
@@ -1614,9 +1656,15 @@ def build_sections(tool_results):
         if r.get("error") or r.get("too_large"):
             sections.append({"module": label, "summary": summary, "blocks": []})
             continue
-        # 逐工具调用构建函数，天然获得该工具的表格与图表（顺序一致）
-        tb = build_tables([t])
-        ch = build_charts([t])
+        # 防御：单工具结果结构异常（如字段缺失 KeyError）不应拖垮整轮，
+        # 降级为告警并跳过该模块的图表（对应 Omega "规则能修的不让模型重写"）。
+        try:
+            tb = build_tables([t])
+            ch = build_charts([t])
+        except Exception as e:
+            warnings.append(f"{label}：结果结构异常，图表已降级（{e}）")
+            sections.append({"module": label, "summary": summary, "blocks": []})
+            continue
         if not tb and not ch:
             continue
         blocks = []
@@ -1625,5 +1673,17 @@ def build_sections(tool_results):
                 blocks.append({"type": "table", **tb[i]})
             if i < len(ch):
                 blocks.append({"type": "chart", **ch[i]})
+        # 图表层校验：空图降级为 note，避免静默空白图（字段绑定/数据存在性校验）
+        clean = []
+        for b in blocks:
+            if b["type"] == "chart" and not _chart_has_data(b.get("option")):
+                title = b.get("title", "图表")
+                warnings.append(f"{title}：数据为空，未生成可视化（避免空白图）")
+                clean.append({"type": "note", "text": f"📊 {title}：当前查询无数据，未生成图表"})
+            else:
+                clean.append(b)
+        blocks = clean
+        if not blocks:
+            continue
         sections.append({"module": label, "summary": summary, "blocks": blocks})
-    return sections
+    return sections, warnings

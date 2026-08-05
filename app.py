@@ -41,6 +41,10 @@ _sessions = {}               # sid -> {username, token, dataVersion, expire}
 _sess_lock = threading.Lock()
 SESSION_TTL = 8 * 3600       # 8 小时
 
+# 进行中的问数任务：task_id -> threading.Event（用于取消传播，对应 Omega "运行时契约：可取消"）
+_ask_tasks = {}
+_ask_tasks_lock = threading.Lock()
+
 
 def _create_session(username, token, data_version):
     sid = secrets.token_hex(16)
@@ -222,6 +226,8 @@ class Handler(BaseHTTPRequestHandler):
             self._api_logout()
         elif path == "/api/ask":
             self._api_ask()
+        elif path == "/api/ask/cancel":
+            self._api_ask_cancel()
         elif path == "/api/clear":
             self._api_clear()
         else:
@@ -407,6 +413,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"success": False, "message": "请输入问题"}, 400)
             return
         prior = list(s.get("history", []))
+        # 取消信号：前端生成 task_id 一并上报，点击"停止"时通过 /api/ask/cancel 置位
+        task_id = (d.get("task_id") or "").strip()
+        cancel_event = None
+        if task_id:
+            cancel_event = threading.Event()
+            with _ask_tasks_lock:
+                _ask_tasks[task_id] = cancel_event
         try:
             # 流式 NDJSON 响应：逐条推送执行步骤，最后推送 done
             self.send_response(200)
@@ -416,20 +429,23 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             answer = ""
             llm = get_llm()
-            for ev in agent_mod.run_agent_stream(client, question, llm, prior=prior):
+            for ev in agent_mod.run_agent_stream(client, question, llm, prior=prior, cancel_event=cancel_event):
                 line = (json.dumps(ev, ensure_ascii=False) + "\n").encode("utf-8")
                 self.wfile.write(line)
                 self.wfile.flush()
                 if ev.get("type") == "done":
                     answer = ev.get("answer", "")
-            # 多轮历史入会话（保留最近 20 轮）
-            with _sess_lock:
-                h = s.setdefault("history", [])
-                h.append({"q": question, "a": answer})
-                if len(h) > 20:
-                    s["history"] = h[-20:]
+                elif ev.get("type") == "canceled":
+                    answer = ev.get("answer", "")
+            # 多轮历史入会话（保留最近 20 轮）；取消的不写入历史（避免半成品污染上下文）
+            if answer and ev.get("type") != "canceled":
+                with _sess_lock:
+                    h = s.setdefault("history", [])
+                    h.append({"q": question, "a": answer})
+                    if len(h) > 20:
+                        s["history"] = h[-20:]
         except (BrokenPipeError, ConnectionResetError):
-            pass  # 客户端断开，忽略
+            pass  # 客户端断开（含用户停止 abort），忽略
         except Exception as e:
             try:
                 self.wfile.write((json.dumps({"type": "error", "message": f"问数失败: {e}"},
@@ -437,6 +453,30 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except Exception:
                 pass
+        finally:
+            if task_id:
+                with _ask_tasks_lock:
+                    _ask_tasks.pop(task_id, None)
+
+    def _api_ask_cancel(self):
+        """取消进行中的问数任务：根据 task_id 置位 cancel_event，使 run_agent_stream 尽快收尾。
+
+        对应 Omega 运行时契约"可取消"：取消信号要传到真正执行查询的地方，
+        而不是只在前端 abort 连接（那样后端仍可能在跑慢查询）。
+        """
+        d = self._read_json()
+        task_id = (d.get("task_id") or "").strip()
+        if not task_id:
+            self._send_json({"success": False, "message": "缺少 task_id"}, 400)
+            return
+        with _ask_tasks_lock:
+            ev = _ask_tasks.get(task_id)
+        if not ev:
+            # 任务可能已结束/不存在，视为已取消
+            self._send_json({"success": True, "canceled": False, "message": "任务已结束或不存在"})
+            return
+        ev.set()
+        self._send_json({"success": True, "canceled": True})
 
     def _api_clear(self):
         s = _get_session(self._cookie_sid())
