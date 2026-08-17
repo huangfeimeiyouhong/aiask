@@ -372,7 +372,7 @@ function render(j){
   $("soSub").textContent = `按商品合并 · 共 ${(so.goods||[]).length} 种 · 分类 ${(so.category_ratio||[]).length} 类`;
   // 出库诊断：后端实际出库类型分布 + 过滤说明（便于排查看不到数据的问题）
   const soNoteEl = $("soNote");
-  const dist = so.raw_out_types ? Object.entries(so.raw_out_types).map(([k,v])=>`${k||"(空)"}:${v}`).join("、") : "";
+  const dist = so.out_type_dist ? Object.entries(so.out_type_dist).map(([k,v])=>`${k||"(空)"}:${v}`).join("、") : "";
   let soMsg = so.note || (dist ? `出库类型分布：${dist}` : "");
   if (soMsg) { soNoteEl.textContent = "ℹ️ " + soMsg; soNoteEl.classList.add("show"); }
   else soNoteEl.classList.remove("show");

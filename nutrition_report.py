@@ -76,15 +76,34 @@ def _walk_date_qty(x, out):
             _walk_date_qty(v, out)
 
 
-def _is_lingliao(t: str) -> bool:
-    """判断出库类型是否为领料出库（含采购越库归入）。
+# 出库类型枚举（据后端文档）：
+#   pickingOut:领料出库, purchaseReturnOut:采购退货, takeStockOut:盘亏出库,
+#   processOut:加工出库, purchaseCrossOut:采购越库, scrapOut:报废出库,
+#   allocateOut:调拨出库, batchImportOut:批量导入出库, sortingOut:分拣出库
+# 营养报表只统计「领料出库」和「采购越库」。
+LINGLIAO_OUT_CODES = {"pickingOut", "purchaseCrossOut"}
+LINGLIAO_TYPE_TEXTS = {"领料出库", "采购越库"}
+LINGLIAO_KEYWORDS = ("领料", "越库")  # 中文关键字兜底
 
-    关键词覆盖：领料/领用/越库（中文），material/picking/cross（英文/代码）。
+
+def _is_lingliao_type(out_type: str, type_text: str = "") -> bool:
+    """判断是否「领料出库 / 采购越库」（营养报表统计口径，精确）。
+
+    匹配优先级：
+      1) 后端 code 精确命中（pickingOut / purchaseCrossOut）；
+      2) typeText 中文标签精确命中（领料出库 / 采购越库）；
+      3) 中文关键字（领料/越库）兜底，兼容历史宽松写法。
+    其余出库类型（采购退货/盘亏/加工/报废/调拨/批量导入/分拣）一律排除。
     """
-    if not t:
-        return False
-    tl = t.lower()
-    return any(k in t for k in ("领料", "领用", "越库")) or any(k in tl for k in ("material", "picking", "cross"))
+    code = (out_type or "").strip()
+    if code in LINGLIAO_OUT_CODES:
+        return True
+    txt = (type_text or "").strip()
+    if txt in LINGLIAO_TYPE_TEXTS:
+        return True
+    if any(k in txt for k in LINGLIAO_KEYWORDS) or any(k in code for k in LINGLIAO_KEYWORDS):
+        return True
+    return False
 
 
 def _to_grams(qty: float, unit: str) -> tuple:
@@ -238,14 +257,14 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
                              warehouse_uuid: str | None = None) -> dict:
     """拉取区间出库记录，按商品合并总重量。
 
-    返回 dict：
-      - items: 商品聚合列表（按重量降序），默认只取「领料出库」（含采购越库）；
-      - raw_out_types: 后端实际返回的出库类型分布（诊断用）；
-      - picked_count / total_count: 命中领料数 / 原始出库记录数；
-      - note: 诊断说明（如类型未匹配时兜底使用全部出库）。
+    统计口径（据后端枚举）：只统计「领料出库 pickingOut」与「采购越库 purchaseCrossOut」。
+    其余出库类型（采购退货/盘亏/加工/报废/调拨/批量导入/分拣）一律排除。
 
-    健壮性：后端 stockOutType 取值未知（代码/英文/其它中文）时不再静默丢弃，
-    改为兜底使用全部出库记录并附 note，避免"后端有数据却报表为空"。
+    返回 dict：
+      - items: 商品聚合列表（按重量降序），仅含领料出库 + 采购越库；
+      - out_type_dist: 后端实际返回的出库类型分布（诊断用）；
+      - picked_count / total_count / excluded_count: 命中 / 原始 / 排除 记录数；
+      - note: 诊断说明（命中为空时提示后端实际类型分布）。
     """
     goods_map = _build_goods_map(client)
     params = {"beginDate": begin_date, "endDate": end_date,
@@ -253,7 +272,7 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
     if warehouse_uuid:
         params["wareHouseUuid"] = warehouse_uuid  # pageStockOut 用大写 H
     agg = {}
-    raw_out_types: dict = {}
+    out_type_dist: dict = {}
     all_rows = []
     page = 1
     while True:
@@ -269,29 +288,29 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
         if not rows:
             break
         for r in rows:
-            t = str(r.get("stockOutType") or r.get("outType")
-                    or r.get("type") or "")
-            raw_out_types[t] = raw_out_types.get(t, 0) + 1
-            all_rows.append(r)
+            code = str(r.get("stockOutType") or r.get("outType")
+                       or r.get("type") or "")
+            txt = str(r.get("typeText") or r.get("stockOutTypeName")
+                      or r.get("outTypeName") or "")
+            # 诊断用：以 code 或 typeText 标注分布
+            key = f"{txt}({code})" if (txt or code) else "未知"
+            out_type_dist[key] = out_type_dist.get(key, 0) + 1
+            all_rows.append((code, txt, r))
         pages = data.get("pages", 1)
         if page >= pages or page >= 200:
             break
         page += 1
 
-    def _type_of(r):
-        return str(r.get("stockOutType") or r.get("outType") or r.get("type") or "")
-
-    # 优先领料出库（含采购越库）；若该过滤为空但原始记录非空，说明后端类型取值
-    # 与关键字不匹配，兜底使用全部出库记录，避免报表为空。
-    picked = [r for r in all_rows if _is_lingliao(_type_of(r))]
-    use_rows = picked if picked else all_rows
+    # 精确统计：仅领料出库 + 采购越库
+    picked = [(c, t, r) for (c, t, r) in all_rows if _is_lingliao_type(c, t)]
     note = ""
     if not picked and all_rows:
-        note = (f"未匹配到领料出库类型，已兜底使用全部出库记录。"
-                f"后端实际出库类型分布={raw_out_types}")
+        note = (f"区间内未匹配到领料出库/采购越库记录，已按类型分布排除其余出库。"
+                f"后端实际出库类型分布={out_type_dist}")
     elif picked:
-        note = f"已按领料出库过滤（类型分布={raw_out_types}）"
-    for r in use_rows:
+        note = f"已按领料出库+采购越库统计（命中 {len(picked)}/{len(all_rows)} 条）"
+
+    for c, t, r in picked:
         gu = r.get("goodsUuid")
         if not gu:
             continue
@@ -314,9 +333,10 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
         it["weight_g"] = round(it["weight_g"], 2)
     return {
         "items": items,
-        "raw_out_types": raw_out_types,
+        "out_type_dist": out_type_dist,
         "picked_count": len(picked),
         "total_count": len(all_rows),
+        "excluded_count": len(all_rows) - len(picked),
         "note": note,
     }
 
@@ -502,9 +522,10 @@ def build_nutrition_report(client, llm=None, begin_date: str = "",
         "repast": repast,
         "stock_out": {
             "goods": goods["items"],
-            "raw_out_types": goods["raw_out_types"],
+            "out_type_dist": goods["out_type_dist"],
             "picked_count": goods["picked_count"],
             "total_count": goods["total_count"],
+            "excluded_count": goods["excluded_count"],
             "note": goods["note"],
             "category_ratio": cat_items,
             "total_weight_g": round(cat_total, 1),

@@ -62,9 +62,9 @@ class FakeClient:
         if params.get("pageNo", 1) > 1:
             return {"success": True, "data": {"records": [], "pages": 1}}
         return {"success": True, "data": {"records": [
-            {"goodsUuid": "g1", "stockOutType": "materialOut", "qty": 10, "unit": "斤"},
-            {"goodsUuid": "g2", "stockOutType": "领料出库", "qty": 20, "unit": "斤"},
-            {"goodsUuid": "g1", "stockOutType": "returnOut", "qty": 999, "unit": "斤"},  # 非领料，应剔除
+            {"goodsUuid": "g1", "stockOutType": "pickingOut", "typeText": "领料出库", "qty": 10, "unit": "斤"},
+            {"goodsUuid": "g2", "stockOutType": "purchaseCrossOut", "typeText": "采购越库", "qty": 20, "unit": "斤"},
+            {"goodsUuid": "g1", "stockOutType": "allocateOut", "typeText": "调拨出库", "qty": 999, "unit": "斤"},  # 非领料/越库，应剔除
         ], "pages": 1}}
 
 
@@ -100,10 +100,11 @@ def main():
     check("取到 480", rp["total"] == 480, str(rp))
     check("来源 queryDateGroupStat", rp["source"] == "queryDateGroupStat")
 
-    print("T3 领料出库按商品合并（剔除非领料）")
+    print("T3 领料出库+采购越库按商品合并（排除其余出库类型）")
     goods = nr.fetch_stock_out_by_goods(FakeClient(), "2026-08-17", "2026-08-17", "w1")
-    check("2 个商品", len(goods["items"]) == 2, str(goods))
-    check("命中领料 2 条", goods["picked_count"] == 2)
+    check("2 个商品（剔除调拨出库）", len(goods["items"]) == 2, str(goods))
+    check("命中领料+越库 2 条", goods["picked_count"] == 2)
+    check("排除 1 条（调拨）", goods["excluded_count"] == 1)
     check("原始 3 条", goods["total_count"] == 3)
     by_name = {g["name"]: g for g in goods["items"]}
     check("猪肉 10 斤→5000g", by_name["猪肉"]["weight_g"] == 5000.0)
