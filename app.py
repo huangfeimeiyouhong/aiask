@@ -29,9 +29,11 @@ from hcg_client import HCGClient
 from hunyuan import get_llm
 import semantic_tools as st
 import agent as agent_mod
+import nutrition_report as nr
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INDEX_PATH = os.path.join(BASE_DIR, "index.html")
+NUTRITION_PATH = os.path.join(BASE_DIR, "nutrition.html")
 COOKIE_NAME = "aiqa_sid"
 
 # ---------------------------------------------------------------------------
@@ -200,6 +202,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._send_text("index.html not found", 500)
             return
+        if path in ("/nutrition.html",):
+            try:
+                with open(NUTRITION_PATH, "rb") as f:
+                    self._send_text(f.read(), ctype="text/html; charset=utf-8",
+                                    cache="no-store, no-cache, must-revalidate, max-age=0")
+            except Exception:
+                self._send_text("nutrition.html not found", 500)
+            return
         if path == "/sso":
             self._api_sso()
             return
@@ -233,6 +243,8 @@ class Handler(BaseHTTPRequestHandler):
             self._api_ask_cancel()
         elif path == "/api/ask/rerun":
             self._api_ask_rerun()
+        elif path == "/api/nutrition/report":
+            self._api_nutrition_report()
         elif path == "/api/clear":
             self._api_clear()
         else:
@@ -542,6 +554,37 @@ class Handler(BaseHTTPRequestHandler):
         with _sess_lock:
             s["history"] = []
         self._send_json({"success": True})
+
+    def _api_nutrition_report(self):
+        """营养报表：菜单 + 实际就餐人数 + 领料出库营养分析。
+
+        请求体：{begin_date, end_date, warehouse_uuid?, warehouse_name?}
+        """
+        s = _get_session(self._cookie_sid())
+        if not s:
+            self._send_json({"success": False,
+                             "message": "未登录或登录已过期，请重新登录"}, 401)
+            return
+        d = self._read_json()
+        begin = (d.get("begin_date") or "").strip()
+        end = (d.get("end_date") or "").strip()
+        if not begin or not end:
+            self._send_json({"success": False, "message": "请提供 begin_date / end_date"})
+            return
+        client = get_client(s)
+        try:
+            report = nr.build_nutrition_report(
+                client,
+                begin_date=begin, end_date=end,
+                warehouse_uuid=(d.get("warehouse_uuid") or "").strip() or None,
+                warehouse_name=(d.get("warehouse_name") or "").strip() or None,
+            )
+        except Exception as e:
+            self._send_json({"success": False, "message": f"生成营养报表失败: {e}"}, 502)
+            return
+        report["username"] = s["username"]
+        report["img_base"] = config.SETTINGS["HCG_BASE_URL"].rstrip("/")
+        self._send_json(report)
 
     # 静默默认日志
     def log_message(self, fmt, *args):

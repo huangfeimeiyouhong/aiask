@@ -15,9 +15,19 @@ import hashlib
 from urllib.parse import urlencode
 import urllib.request
 
-DEFAULT_BASE_URL = "https://wms.houchuguanjia.com/"
+# 后厨管家接口基地址：优先跟随 config.SETTINGS["HCG_BASE_URL"]（单一事实来源，
+# 默认即测试环境地址），仅在脱离 ai_qa_system 独立使用时回退到下方字面量。
+try:
+    from config import SETTINGS as _CFG
+    DEFAULT_BASE_URL = _CFG.get("HCG_BASE_URL", "http://hcgj-test-merchant.zou-yun.com/")
+except Exception:
+    DEFAULT_BASE_URL = "http://hcgj-test-merchant.zou-yun.com/"
 
 import urllib.error
+
+# 直连出站：后端是服务端调用后厨管家接口，绕过本地出口代理（沙箱代理可能不通
+# 外部测试域名，导致登录/问数卡死）。已验证直连测试域名返回 200，更可靠。
+_no_proxy_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class ResponseTooLarge(Exception):
@@ -65,7 +75,7 @@ class HCGClient:
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST",
                                      headers=self._headers())
-        with urllib.request.urlopen(req, timeout=90.0) as resp:
+        with _no_proxy_opener.open(req, timeout=90.0) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def _get(self, path: str, params: dict | None = None, max_bytes: int | None = None,
@@ -76,7 +86,7 @@ class HCGClient:
             if clean:
                 url = url + "?" + urlencode(clean, doseq=True)
         req = urllib.request.Request(url, method="GET", headers=self._headers())
-        with urllib.request.urlopen(req, timeout=timeout or 90.0) as resp:
+        with _no_proxy_opener.open(req, timeout=timeout or 90.0) as resp:
             if max_bytes:
                 cl = resp.headers.get("Content-Length")
                 if cl and int(cl) > max_bytes:
@@ -141,6 +151,20 @@ class HCGClient:
 
     def page_stock_out(self, params: dict | None = None) -> dict:
         return self._get("/hcgj-portal/api/wms/stock/pageStockOut", params)
+
+    # ---- 菜单 / 就餐人数（营养报表）----
+    def dish_menu(self, params: dict | None = None) -> dict:
+        """查询菜单（按日期区间）。路径实测：带 /api。"""
+        return self._get("/hcgj-portal/api/dish/menu/list", params)
+
+    def meals_query_date_group_stat(self, params: dict | None = None) -> dict:
+        """按日期获取实际就餐人数统计。路径实测：不带 /api（前缀混用，见记忆）。"""
+        return self._get("/hcgj-portal/cost/meals/queryDateGroupStat", params)
+
+    def meal_record_stat(self, params: dict | None = None) -> dict:
+        """就餐统计（备用接口，含 repastQty 就餐人数）。"""
+        return self._get("/hcgj-portal/api/repast/mealRecord/stat", params)
+
 
     def query_warehouses(self, params: dict | None = None) -> dict:
         return self._get("/hcgj-portal/api/wms/com/queryWarehouses", params)

@@ -15,7 +15,9 @@
   MAAS_MODEL        单模型名（未配 MAAS_MODELS 时回退用），默认 hy3
   MAAS_MODELS       候选模型列表（逗号分隔），按顺序尝试；某模型额度/限流/不可用时
                     自动切到下一个模型，全部失败才报错。未配则回退 MAAS_MODEL/内置默认列表。
-  HCG_BASE_URL      后厨管家接口地址，默认 https://wms.houchuguanjia.com/
+  HCG_BASE_URL      后厨管家接口基地址（可频繁切换：改 .env 该行或环境变量后重启）。
+                    默认测试环境 http://hcgj-test-merchant.zou-yun.com/；
+                    切回生产改回 https://wms.houchuguanjia.com/
   SESSION_SECURE    是否给 cookie 加 Secure 标志（走 HTTPS 反向代理时设 1）
   MOCK_LLM          设 1 强制走本地 MockLLM（无密钥演示）
   MAX_RECORDS       单次查询（单月）允许拉取的最大记录数；超过则触发「按月切片」或
@@ -83,7 +85,7 @@ SETTINGS = {
     "MAAS_BASE_URL": os.environ.get("MAAS_BASE_URL", "https://tokenhub.tencentmaas.com/v1"),
     "MAAS_MODEL": os.environ.get("MAAS_MODEL", "hy3"),
     "MAAS_MODELS": os.environ.get("MAAS_MODELS", ""),
-    "HCG_BASE_URL": os.environ.get("HCG_BASE_URL", "https://wms.houchuguanjia.com/"),
+    "HCG_BASE_URL": os.environ.get("HCG_BASE_URL", "http://hcgj-test-merchant.zou-yun.com/"),
     "SESSION_SECURE": os.environ.get("SESSION_SECURE", "0") == "1",
     "MOCK_LLM": os.environ.get("MOCK_LLM", "0") == "1",
     "MAX_RECORDS": int(os.environ.get("MAX_RECORDS", "200000")),
