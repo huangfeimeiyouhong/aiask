@@ -167,14 +167,16 @@ class HCGClient:
 
 
     def query_warehouses(self, params: dict | None = None) -> dict:
-        """查询用户可见仓库列表（按门店权限过滤）。
+        """查询用户可见仓库列表。
 
-        关键口径：必须传 filterType=store，表示按当前登录用户的门店/组织权限
-        返回其**有权访问**的仓库；不传会返回全量仓库，绕过后端权限隔离，
-        导致用户在营养报表/结果页仓库下拉里看到无权仓库（上一轮仓库权限修复的根因）。
+        注意：filterType 是**仓库类型**过滤（store/distribution/branch/depart），
+        不是用户权限过滤；session token 本身已做权限隔离。默认不传 filterType，
+        以返回当前账号有权访问的全部仓库。若调用方明确需要只查某类仓库（如门店），
+        可在 params 里显式传入 `filterType`。
         """
         p = dict(params or {})
-        p.setdefault("filterType", "store")
+        # 不再默认注入 filterType=store，因为仓库类型≠权限，误注会导致
+        # 非门店类型仓库被过滤掉，触发"当前账号无任何可见仓库"假阴性。
         p.setdefault("pageNo", 1)
         p.setdefault("pageSize", 200)
         return self._get("/hcgj-portal/api/wms/com/queryWarehouses", p)
