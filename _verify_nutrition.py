@@ -55,8 +55,9 @@ class FakeClient:
 
     def query_goods(self, params=None):
         return {"success": True, "data": [
-            {"uuid": "g1", "goodsName": "猪肉", "firstCategoryUuid": "c1", "standardUnit": "斤"},
-            {"uuid": "g2", "goodsName": "白菜", "firstCategoryUuid": "c2", "standardUnit": "斤"}]}
+            # 用 goodsFirstCategoryUuid（与真实库存记录字段命名一致）
+            {"uuid": "g1", "goodsName": "猪肉", "goodsFirstCategoryUuid": "c1", "standardUnit": "斤"},
+            {"uuid": "g2", "goodsName": "白菜", "goodsFirstCategoryUuid": "c2", "standardUnit": "斤"}]}
 
     def page_stock_out(self, params=None):
         if params.get("pageNo", 1) > 1:
@@ -125,6 +126,12 @@ def main():
     check("总能量 21450", abs(totals["energy_kcal"] - 21450.0) < 0.1, str(totals))
     check("总蛋白", abs(totals["protein_g"] - (13.2 * 50 + 1.5 * 100)) < 0.1, str(totals))
 
+    print("T4.5 营养值已合并回 stock_out.goods（前端表格直接展示）")
+    rep0 = nr.build_nutrition_report(FakeClient(), FakeLLM(), "2026-08-17", "2026-08-17", "w1")
+    sg = {g["name"]: g for g in rep0["stock_out"]["goods"]}
+    check("stock_out.goods 含能量字段", "energy_kcal" in sg["猪肉"], str(sg["猪肉"].keys()))
+    check("猪肉表格能量 19750", abs(sg["猪肉"]["energy_kcal"] - 19750.0) < 0.01, str(sg["猪肉"]))
+
     print("T5 报表组装（含人均 + 分类占比）")
     rep = nr.build_nutrition_report(FakeClient(), FakeLLM(), "2026-08-17", "2026-08-17", "w1")
     check("success", rep["success"] is True)
@@ -134,6 +141,7 @@ def main():
     check("分类占比 肉禽蛋 33.3%", abs(cat["肉禽蛋"]["ratio"] - 33.3) < 0.2, str(cat))
     check("总重量 15000g", rep["stock_out"]["total_weight_g"] == 15000.0)
     check("营养估算注记", bool(rep["nutrition"]["note"]))
+    check("分类不在未分类", "未分类" not in cat, str(cat))
 
     print("T6 兜底：LLM 返回垃圾时用内置表")
     class BadLLM:

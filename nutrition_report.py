@@ -211,11 +211,14 @@ def fetch_repast_qty(client, begin_date: str, end_date: str,
 # 3) 领料出库商品详情（按商品合并总重量）
 # ---------------------------------------------------------------------------
 def _build_category_map(client) -> dict:
-    """分类 uuid -> name 映射（树形递归）。"""
+    """分类 uuid -> name 映射（树形递归，兼容 data 为 list 或 {records:[]} 两种结构）。"""
     m = {}
     try:
         d = client.query_goods_category({})
-        cats = (d.get("data") or []) if d.get("success") else []
+        if not d.get("success"):
+            return m
+        data = d.get("data") or {}
+        cats = data if isinstance(data, list) else (data.get("records") or data.get("list") or [])
 
         def walk(items):
             for c in items or []:
@@ -231,20 +234,29 @@ def _build_category_map(client) -> dict:
 
 
 def _build_goods_map(client) -> dict:
-    """goodsUuid -> {name, category, unit}。"""
+    """goodsUuid -> {name, category, unit}。
+
+    兼容字段命名：queryGoods 真实返回常见 goodsFirstCategoryUuid/goodsFirstCategoryName，
+    而非 firstCategoryUuid/firstCategoryName；同时兼容 list / {records:[]} 两种响应结构。
+    """
     m = {}
     try:
         d = client.query_goods({})
-        goods = (d.get("data") or []) if d.get("success") else []
+        if not d.get("success"):
+            return m
+        data = d.get("data") or {}
+        goods = data if isinstance(data, list) else (data.get("records") or data.get("list") or [])
         cat_map = _build_category_map(client)
         for g in goods:
             gu = g.get("uuid")
             if not gu:
                 continue
+            # 优先用 goodsFirstCategory*（与库存记录字段命名一致），再回退 firstCategory*
+            cu = g.get("goodsFirstCategoryUuid") or g.get("firstCategoryUuid")
+            cn = g.get("goodsFirstCategoryName") or g.get("firstCategoryName")
             m[gu] = {
                 "name": g.get("goodsName") or g.get("name") or "未知商品",
-                "category": cat_map.get(g.get("firstCategoryUuid"))
-                            or g.get("firstCategoryName") or "未分类",
+                "category": cat_map.get(cu) or cn or "未分类",
                 "unit": g.get("standardUnit") or g.get("unit")
                         or g.get("goodsUnit") or "",
             }
@@ -441,8 +453,8 @@ def compute_nutrition(llm, goods_items: list) -> dict:
         "carb_g": round(sum(i["carb_g"] for i in items), 1),
     }
     total_weight = round(sum(i["weight_g"] for i in items), 1)
-    note = ("营养值为模型按食材估算（参考《中国食物成分表》量级），"
-            "非实验室检测值；重量单位无法识别时按克估算。") if not use_model else \
+    note = ("营养值为内置食材营养表估算（参考《中国食物成分表》量级），"
+            "非实验室检测值；未识别食材按默认值估算。") if not use_model else \
            "营养值为大模型按食材估算，非实验室检测值，仅供参考。"
     return {"items": items, "totals": totals, "total_weight_g": total_weight,
             "note": note, "model_based": use_model}
@@ -493,9 +505,9 @@ def build_nutrition_report(client, llm=None, begin_date: str = "",
     goods = fetch_stock_out_by_goods(client, begin_date, end_date, warehouse_uuid)
     nutr = compute_nutrition(llm, goods["items"])
 
-    # 领料出库商品分类占比（按折算重量）
+    # 领料出库商品分类占比（按折算重量），用 nutr.items（已带分类和营养值）
     cat_agg = defaultdict(float)
-    for g in goods["items"]:
+    for g in nutr["items"]:
         cat_agg[g["category"] or "未分类"] += g["weight_g"]
     cat_total = sum(cat_agg.values()) or 1.0
     cat_items = sorted(
@@ -521,7 +533,7 @@ def build_nutrition_report(client, llm=None, begin_date: str = "",
         "menu": menu,
         "repast": repast,
         "stock_out": {
-            "goods": goods["items"],
+            "goods": nutr["items"],
             "out_type_dist": goods["out_type_dist"],
             "picked_count": goods["picked_count"],
             "total_count": goods["total_count"],
@@ -529,7 +541,7 @@ def build_nutrition_report(client, llm=None, begin_date: str = "",
             "note": goods["note"],
             "category_ratio": cat_items,
             "total_weight_g": round(cat_total, 1),
-            "count": len(goods["items"]),
+            "count": len(nutr["items"]),
         },
         "nutrition": nutr,
         "per_capita": per_capita,
