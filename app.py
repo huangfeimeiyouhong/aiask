@@ -25,7 +25,7 @@ from urllib.parse import urlparse, parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import config
-from hcg_client import HCGClient
+from hcg_client import HCGClient, extract_warehouses
 from hunyuan import get_llm
 import semantic_tools as st
 import agent as agent_mod
@@ -537,7 +537,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"success": False, "message": f"获取仓库失败: {e}"})
             return
-        whs = (r.get("data") or []) if r.get("success") else []
+        whs = extract_warehouses(r)
         names = []
         for w in whs:
             n = (w.get("warehouseName") or w.get("name") or "").strip()

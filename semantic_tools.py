@@ -19,7 +19,7 @@ from metrics_registry import (
     METRICS, normalize_out_type,
 )
 import sys
-from hcg_client import ResponseTooLarge
+from hcg_client import ResponseTooLarge, extract_warehouses
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 
@@ -499,7 +499,7 @@ def _resolve_warehouse_uuids(client, warehouse_name):
         return [], False
     try:
         d = client.query_warehouses({})
-        whs = (d.get("data") or []) if d.get("success") else []
+        whs = extract_warehouses(d)
     except Exception:
         whs = []
     if not whs:
@@ -2722,7 +2722,7 @@ def _resolve_all_warehouse_uuids(client, warehouse_name):
         return wh_uuids
     try:
         d = client.query_warehouses({})
-        whs = (d.get("data") or []) if d.get("success") else []
+        whs = extract_warehouses(d)
     except Exception:
         whs = []
     return [w.get("uuid") for w in whs if w.get("uuid")][:30]

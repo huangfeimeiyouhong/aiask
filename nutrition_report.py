@@ -19,6 +19,7 @@ import re
 from collections import defaultdict
 
 from hunyuan import get_llm, MockLLM
+from hcg_client import extract_warehouses
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +403,7 @@ def _resolve_warehouse_uuid(client, warehouse_uuid, warehouse_name):
     visible = []
     try:
         r = client.query_warehouses({})
-        whs = (r.get("data") or []) if r.get("success") else []
+        whs = extract_warehouses(r)
         for w in whs:
             visible.append({
                 "uuid": w.get("uuid") or w.get("warehouseUuid") or "",

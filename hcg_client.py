@@ -167,10 +167,37 @@ class HCGClient:
 
 
     def query_warehouses(self, params: dict | None = None) -> dict:
-        return self._get("/hcgj-portal/api/wms/com/queryWarehouses", params)
+        """查询用户可见仓库列表（按门店权限过滤）。
+
+        关键口径：必须传 filterType=store，表示按当前登录用户的门店/组织权限
+        返回其**有权访问**的仓库；不传会返回全量仓库，绕过后端权限隔离，
+        导致用户在营养报表/结果页仓库下拉里看到无权仓库（上一轮仓库权限修复的根因）。
+        """
+        p = dict(params or {})
+        p.setdefault("filterType", "store")
+        p.setdefault("pageNo", 1)
+        p.setdefault("pageSize", 200)
+        return self._get("/hcgj-portal/api/wms/com/queryWarehouses", p)
 
     def query_suppliers(self, params: dict | None = None) -> dict:
         return self._get("/hcgj-portal/api/wms/com/querySuppliers", params)
+
+
+def extract_warehouses(resp: dict | None) -> list:
+    """从 queryWarehouses 响应里稳健提取仓库列表。
+
+    该接口可能返回两种结构：① data 直接是 list；② data 是分页对象
+    {"records":[...], "total":N} / {"list":[...]}。这里统一归一化，
+    避免解析错把整页 dict 当成一条记录。
+    """
+    if not isinstance(resp, dict) or not resp.get("success"):
+        return []
+    data = resp.get("data")
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("records") or data.get("list") or []
+    return []
 
     def query_goods(self, params: dict | None = None) -> dict:
         """查询商品列表（基础数据，不分页）。"""
