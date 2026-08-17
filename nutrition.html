@@ -202,6 +202,7 @@ footer{text-align:center;color:var(--ink3);font-size:12px;padding:20px 0}
     <div class="sec">
       <div class="sec-head"><span class="dot"></span><h2>领料出库商品</h2>
         <span class="sub" id="soSub"></span></div>
+      <div class="note" id="soNote"></div>
       <div class="double">
         <div>
           <div class="pie-box" id="pieBox"></div>
@@ -369,6 +370,12 @@ function render(j){
 
   // 领料商品
   $("soSub").textContent = `按商品合并 · 共 ${(so.goods||[]).length} 种 · 分类 ${(so.category_ratio||[]).length} 类`;
+  // 出库诊断：后端实际出库类型分布 + 过滤说明（便于排查看不到数据的问题）
+  const soNoteEl = $("soNote");
+  const dist = so.raw_out_types ? Object.entries(so.raw_out_types).map(([k,v])=>`${k||"(空)"}:${v}`).join("、") : "";
+  let soMsg = so.note || (dist ? `出库类型分布：${dist}` : "");
+  if (soMsg) { soNoteEl.textContent = "ℹ️ " + soMsg; soNoteEl.classList.add("show"); }
+  else soNoteEl.classList.remove("show");
   renderPie(so.category_ratio||[]);
   renderTable(so.goods||[]);
 }

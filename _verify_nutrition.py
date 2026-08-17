@@ -102,15 +102,17 @@ def main():
 
     print("T3 领料出库按商品合并（剔除非领料）")
     goods = nr.fetch_stock_out_by_goods(FakeClient(), "2026-08-17", "2026-08-17", "w1")
-    check("2 个商品", len(goods) == 2, str(goods))
-    by_name = {g["name"]: g for g in goods}
+    check("2 个商品", len(goods["items"]) == 2, str(goods))
+    check("命中领料 2 条", goods["picked_count"] == 2)
+    check("原始 3 条", goods["total_count"] == 3)
+    by_name = {g["name"]: g for g in goods["items"]}
     check("猪肉 10 斤→5000g", by_name["猪肉"]["weight_g"] == 5000.0)
     check("白菜 20 斤→10000g", by_name["白菜"]["weight_g"] == 10000.0)
     check("猪肉分类 join 肉禽蛋", by_name["猪肉"]["category"] == "肉禽蛋")
     check("白菜分类 join 蔬菜", by_name["白菜"]["category"] == "蔬菜")
 
     print("T4 营养计算（LLM 每100g × 重量折算）")
-    items = nr.compute_nutrition(FakeLLM(), goods)["items"]
+    items = nr.compute_nutrition(FakeLLM(), goods["items"])["items"]
     by_name2 = {i["name"]: i for i in items}
     # 猪肉：395kcal/100g × 5000g/100 = 19750 kcal
     check("猪肉能量 19750", abs(by_name2["猪肉"]["energy_kcal"] - 19750.0) < 0.01,
@@ -118,7 +120,7 @@ def main():
     # 白菜：17kcal/100g × 10000g/100 = 1700 kcal
     check("白菜能量 1700", abs(by_name2["白菜"]["energy_kcal"] - 1700.0) < 0.01,
           str(by_name2["白菜"]))
-    totals = nr.compute_nutrition(FakeLLM(), goods)["totals"]
+    totals = nr.compute_nutrition(FakeLLM(), goods["items"])["totals"]
     check("总能量 21450", abs(totals["energy_kcal"] - 21450.0) < 0.1, str(totals))
     check("总蛋白", abs(totals["protein_g"] - (13.2 * 50 + 1.5 * 100)) < 0.1, str(totals))
 

@@ -77,11 +77,14 @@ def _walk_date_qty(x, out):
 
 
 def _is_lingliao(t: str) -> bool:
-    """判断出库类型是否为领料出库（含采购越库归入）。"""
+    """判断出库类型是否为领料出库（含采购越库归入）。
+
+    关键词覆盖：领料/领用/越库（中文），material/picking/cross（英文/代码）。
+    """
     if not t:
         return False
     tl = t.lower()
-    return any(k in t for k in ("领料", "越库")) or any(k in tl for k in ("material", "picking", "cross"))
+    return any(k in t for k in ("领料", "领用", "越库")) or any(k in tl for k in ("material", "picking", "cross"))
 
 
 def _to_grams(qty: float, unit: str) -> tuple:
@@ -232,14 +235,26 @@ def _build_goods_map(client) -> dict:
 
 
 def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
-                             warehouse_uuid: str | None = None) -> list:
-    """拉取区间领料出库记录，按商品合并总重量。返回商品列表（按重量降序）。"""
+                             warehouse_uuid: str | None = None) -> dict:
+    """拉取区间出库记录，按商品合并总重量。
+
+    返回 dict：
+      - items: 商品聚合列表（按重量降序），默认只取「领料出库」（含采购越库）；
+      - raw_out_types: 后端实际返回的出库类型分布（诊断用）；
+      - picked_count / total_count: 命中领料数 / 原始出库记录数；
+      - note: 诊断说明（如类型未匹配时兜底使用全部出库）。
+
+    健壮性：后端 stockOutType 取值未知（代码/英文/其它中文）时不再静默丢弃，
+    改为兜底使用全部出库记录并附 note，避免"后端有数据却报表为空"。
+    """
     goods_map = _build_goods_map(client)
     params = {"beginDate": begin_date, "endDate": end_date,
               "pageNo": 1, "pageSize": 200, "dateType": 0}
     if warehouse_uuid:
         params["wareHouseUuid"] = warehouse_uuid  # pageStockOut 用大写 H
     agg = {}
+    raw_out_types: dict = {}
+    all_rows = []
     page = 1
     while True:
         params["pageNo"] = page
@@ -254,34 +269,56 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
         if not rows:
             break
         for r in rows:
-            t = r.get("stockOutType") or r.get("outType") or ""
-            if not _is_lingliao(str(t)):
-                continue
-            gu = r.get("goodsUuid") or r.get("goodsUuid")
-            if not gu:
-                continue
-            q = _num(r.get("qty"))
-            info = goods_map.get(gu) or {}
-            a = agg.setdefault(gu, {
-                "uuid": gu,
-                "name": info.get("name") or r.get("goodsName") or "未知商品",
-                "category": info.get("category", "未分类"),
-                "unit": r.get("unit") or info.get("unit", "") or "",
-                "qty": 0.0,
-                "records": 0,
-            })
-            a["qty"] += q
-            a["records"] += 1
+            t = str(r.get("stockOutType") or r.get("outType")
+                    or r.get("type") or "")
+            raw_out_types[t] = raw_out_types.get(t, 0) + 1
+            all_rows.append(r)
         pages = data.get("pages", 1)
         if page >= pages or page >= 200:
             break
         page += 1
+
+    def _type_of(r):
+        return str(r.get("stockOutType") or r.get("outType") or r.get("type") or "")
+
+    # 优先领料出库（含采购越库）；若该过滤为空但原始记录非空，说明后端类型取值
+    # 与关键字不匹配，兜底使用全部出库记录，避免报表为空。
+    picked = [r for r in all_rows if _is_lingliao(_type_of(r))]
+    use_rows = picked if picked else all_rows
+    note = ""
+    if not picked and all_rows:
+        note = (f"未匹配到领料出库类型，已兜底使用全部出库记录。"
+                f"后端实际出库类型分布={raw_out_types}")
+    elif picked:
+        note = f"已按领料出库过滤（类型分布={raw_out_types}）"
+    for r in use_rows:
+        gu = r.get("goodsUuid")
+        if not gu:
+            continue
+        q = _num(r.get("qty"))
+        info = goods_map.get(gu) or {}
+        a = agg.setdefault(gu, {
+            "uuid": gu,
+            "name": info.get("name") or r.get("goodsName") or "未知商品",
+            "category": info.get("category", "未分类"),
+            "unit": r.get("unit") or info.get("unit", "") or "",
+            "qty": 0.0,
+            "records": 0,
+        })
+        a["qty"] += q
+        a["records"] += 1
     items = sorted(agg.values(), key=lambda x: x["qty"], reverse=True)
     # 折算克数
     for it in items:
         it["weight_g"], it["unit_exact"] = _to_grams(it["qty"], it["unit"])
         it["weight_g"] = round(it["weight_g"], 2)
-    return items
+    return {
+        "items": items,
+        "raw_out_types": raw_out_types,
+        "picked_count": len(picked),
+        "total_count": len(all_rows),
+        "note": note,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -434,11 +471,11 @@ def build_nutrition_report(client, llm=None, begin_date: str = "",
     menu = fetch_menu(client, begin_date, end_date, warehouse_uuid, warehouse_name)
     repast = fetch_repast_qty(client, begin_date, end_date, warehouse_uuid)
     goods = fetch_stock_out_by_goods(client, begin_date, end_date, warehouse_uuid)
-    nutr = compute_nutrition(llm, goods)
+    nutr = compute_nutrition(llm, goods["items"])
 
     # 领料出库商品分类占比（按折算重量）
     cat_agg = defaultdict(float)
-    for g in goods:
+    for g in goods["items"]:
         cat_agg[g["category"] or "未分类"] += g["weight_g"]
     cat_total = sum(cat_agg.values()) or 1.0
     cat_items = sorted(
@@ -464,10 +501,14 @@ def build_nutrition_report(client, llm=None, begin_date: str = "",
         "menu": menu,
         "repast": repast,
         "stock_out": {
-            "goods": goods,
+            "goods": goods["items"],
+            "raw_out_types": goods["raw_out_types"],
+            "picked_count": goods["picked_count"],
+            "total_count": goods["total_count"],
+            "note": goods["note"],
             "category_ratio": cat_items,
             "total_weight_g": round(cat_total, 1),
-            "count": len(goods),
+            "count": len(goods["items"]),
         },
         "nutrition": nutr,
         "per_capita": per_capita,
