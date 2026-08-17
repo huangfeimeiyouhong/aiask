@@ -233,11 +233,38 @@ def _build_category_map(client) -> dict:
     return m
 
 
+def _extract_goods_nutri(g: dict) -> dict | None:
+    """从商品主数据记录里提取每 100g 营养值（能量/蛋白质/脂肪/碳水）。
+
+    字段命名兼容后排菜营养约定（nlKcal/dbzG/zfG/tshhwG）与常见英文/中文写法。
+    四个值都缺失时返回 None（交由大模型/兜底表处理）。
+    """
+    cand = {
+        "energy_kcal": ("nlKcal", "energyKcal", "energy", "kcal", "heat",
+                        "heatEnergy", "rl", "calorie", "热量", "能量"),
+        "protein_g":   ("dbzG", "proteinG", "protein", "dbz", "蛋白质"),
+        "fat_g":       ("zfG", "fatG", "fat", "zf", "脂肪"),
+        "carb_g":      ("tshhwG", "carbG", "carbohydrate", "carb", "tshhw", "碳水"),
+    }
+    out = {}
+    for key, names in cand.items():
+        v = None
+        for n in names:
+            if g.get(n) not in (None, "", 0):
+                v = _num(g.get(n))
+                break
+        out[key] = v
+    if all(v in (None, 0) for v in out.values()):
+        return None
+    return out
+
+
 def _build_goods_map(client) -> dict:
-    """goodsUuid -> {name, category, unit}。
+    """goodsUuid -> {name, category, unit, nutri100}。
 
     兼容字段命名：queryGoods 真实返回常见 goodsFirstCategoryUuid/goodsFirstCategoryName，
     而非 firstCategoryUuid/firstCategoryName；同时兼容 list / {records:[]} 两种响应结构。
+    nutri100 为商品主数据自带的营养（每 100g），存在时优先于大模型估算。
     """
     m = {}
     try:
@@ -259,6 +286,7 @@ def _build_goods_map(client) -> dict:
                 "category": cat_map.get(cu) or cn or "未分类",
                 "unit": g.get("standardUnit") or g.get("unit")
                         or g.get("goodsUnit") or "",
+                "nutri100": _extract_goods_nutri(g),
             }
     except Exception:
         pass
@@ -328,13 +356,20 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
             continue
         q = _num(r.get("qty"))
         info = goods_map.get(gu) or {}
+        # 分类优先级：出库记录自带的分类名（与库存查询一致，records 自带 firstCategoryName）
+        #   -> 商品主数据 join 出的分类名 -> 兜底「未分类」
+        cat = (r.get("firstCategoryName") or r.get("goodsFirstCategoryName")
+               or info.get("category") or "未分类")
+        # 营养优先级：商品主数据 nutri100 -> 出库记录自带的营养字段 -> 后续大模型/兜底表
+        nutri100 = info.get("nutri100") or _extract_goods_nutri(r)
         a = agg.setdefault(gu, {
             "uuid": gu,
             "name": info.get("name") or r.get("goodsName") or "未知商品",
-            "category": info.get("category", "未分类"),
+            "category": cat,
             "unit": r.get("unit") or info.get("unit", "") or "",
             "qty": 0.0,
             "records": 0,
+            "nutri100": nutri100,
         })
         a["qty"] += q
         a["records"] += 1
@@ -396,40 +431,55 @@ def _fallback_100g(name: str):
 
 
 def compute_nutrition(llm, goods_items: list) -> dict:
-    """对商品列表估算每 100g 营养值（模型优先，兜底表保底）。"""
+    """对商品列表估算每 100g 营养值。
+
+    优先级：① 商品主数据自带营养（nutri100，每 100g）> ② 大模型估算 > ③ 内置食材营养兜底表。
+    仅当存在缺主数据营养的商品时才调用大模型（节省开销）。
+    """
     if not goods_items:
         return {"items": [], "note": "无领料出库商品"}
-    names = [g["name"] for g in goods_items]
-    system = ("你是营养学专家，熟悉《中国食物成分表》。根据食物名称估算其"
-              "每100克可食部营养成分。只输出 JSON，不要任何其它文字。")
-    user = (
-        "请为以下食材估算每 100 克的营养值：\n" +
-        json.dumps(names, ensure_ascii=False) +
-        "\n返回格式（严格 JSON，勿输出其它内容）：\n"
-        '{"goods":[{"name":"食材名","energy_kcal":0,"protein_g":0,"fat_g":0,"carb_g":0}]}'
-    )
+    # 仅对缺失主数据营养的商品走大模型
+    need_llm = [g for g in goods_items if not g.get("nutri100")]
     llm_result = {}
     use_model = True
-    try:
-        r = llm.chat(system, user)
-        text = r if isinstance(r, str) else r[0]
-        data = _extract_json(text) or {}
-        for g in (data.get("goods") or []):
-            nm = (g.get("name") or "").strip()
-            if nm:
-                llm_result[nm] = (_num(g.get("energy_kcal")),
-                                  _num(g.get("protein_g")),
-                                  _num(g.get("fat_g")),
-                                  _num(g.get("carb_g")))
-    except Exception:
-        llm_result = {}
+    if need_llm:
+        names = [g["name"] for g in need_llm]
+        system = ("你是营养学专家，熟悉《中国食物成分表》。根据食物名称估算其"
+                  "每100克可食部营养成分。只输出 JSON，不要任何其它文字。")
+        user = (
+            "请为以下食材估算每 100 克的营养值：\n" +
+            json.dumps(names, ensure_ascii=False) +
+            "\n返回格式（严格 JSON，勿输出其它内容）：\n"
+            '{"goods":[{"name":"食材名","energy_kcal":0,"protein_g":0,"fat_g":0,"carb_g":0}]}'
+        )
+        try:
+            r = llm.chat(system, user)
+            text = r if isinstance(r, str) else r[0]
+            data = _extract_json(text) or {}
+            for g in (data.get("goods") or []):
+                nm = (g.get("name") or "").strip()
+                if nm:
+                    llm_result[nm] = (_num(g.get("energy_kcal")),
+                                      _num(g.get("protein_g")),
+                                      _num(g.get("fat_g")),
+                                      _num(g.get("carb_g")))
+        except Exception:
+            llm_result = {}
     if not llm_result:
         use_model = False
 
     items = []
+    from_goods = 0  # 命中商品主数据自带营养的商品数
     for g in goods_items:
         name = g["name"]
-        if use_model and name in llm_result:
+        # 优先用商品主数据自带营养（nutri100，每 100g）；其次大模型；最后兜底表
+        per100 = None
+        n100 = g.get("nutri100")
+        if n100:
+            per100 = (n100.get("energy_kcal") or 0, n100.get("protein_g") or 0,
+                      n100.get("fat_g") or 0, n100.get("carb_g") or 0)
+            from_goods += 1
+        elif use_model and name in llm_result:
             per100 = llm_result[name]
         else:
             per100 = _fallback_100g(name)
@@ -453,11 +503,21 @@ def compute_nutrition(llm, goods_items: list) -> dict:
         "carb_g": round(sum(i["carb_g"] for i in items), 1),
     }
     total_weight = round(sum(i["weight_g"] for i in items), 1)
-    note = ("营养值为内置食材营养表估算（参考《中国食物成分表》量级），"
-            "非实验室检测值；未识别食材按默认值估算。") if not use_model else \
-           "营养值为大模型按食材估算，非实验室检测值，仅供参考。"
+    # 注记：说明营养来源优先级
+    if from_goods == len(items):
+        note = "营养值取自商品主数据（每 100g），非实验室检测值。"
+    elif from_goods > 0:
+        note = (f"营养值优先取自商品主数据（{from_goods}/{len(items)} 种），"
+                f"其余由大模型估算；非实验室检测值。")
+    elif use_model:
+        note = ("营养值为大模型按食材估算，非实验室检测值，仅供参考。"
+                "（未从商品主数据识别到营养字段，已回退大模型；"
+                "如商品详情含营养字段，请告知字段名或贴一条商品记录）")
+    else:
+        note = ("营养值为内置食材营养表估算（参考《中国食物成分表》量级），"
+                "非实验室检测值；未识别食材按默认值估算。")
     return {"items": items, "totals": totals, "total_weight_g": total_weight,
-            "note": note, "model_based": use_model}
+            "note": note, "model_based": use_model, "from_goods_count": from_goods}
 
 
 # ---------------------------------------------------------------------------

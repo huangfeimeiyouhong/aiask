@@ -56,8 +56,12 @@ class FakeClient:
     def query_goods(self, params=None):
         return {"success": True, "data": [
             # 用 goodsFirstCategoryUuid（与真实库存记录字段命名一致）
-            {"uuid": "g1", "goodsName": "猪肉", "goodsFirstCategoryUuid": "c1", "standardUnit": "斤"},
-            {"uuid": "g2", "goodsName": "白菜", "goodsFirstCategoryUuid": "c2", "standardUnit": "斤"}]}
+            # 猪肉带后排菜营养约定字段 nlKcal/dbzG/zfG/tshhwG（每 100g）
+            {"uuid": "g1", "goodsName": "猪肉", "goodsFirstCategoryUuid": "c1",
+             "standardUnit": "斤", "nlKcal": 395, "dbzG": 13.2, "zfG": 37.0, "tshhwG": 2.4},
+            # 白菜用中文/其它命名兜底，验证字段名兼容
+            {"uuid": "g2", "goodsName": "白菜", "goodsFirstCategoryUuid": "c2",
+             "standardUnit": "斤", "热量": 17, "蛋白质": 1.5, "脂肪": 0.1, "碳水": 3.2}]}
 
     def page_stock_out(self, params=None):
         if params.get("pageNo", 1) > 1:
@@ -131,6 +135,19 @@ def main():
     sg = {g["name"]: g for g in rep0["stock_out"]["goods"]}
     check("stock_out.goods 含能量字段", "energy_kcal" in sg["猪肉"], str(sg["猪肉"].keys()))
     check("猪肉表格能量 19750", abs(sg["猪肉"]["energy_kcal"] - 19750.0) < 0.01, str(sg["猪肉"]))
+
+    print("T4.2 商品主数据营养优先于大模型（LLM 不被调用）")
+    class CountLLM:
+        def __init__(self):
+            self.calls = 0
+        def chat(self, s, u):
+            self.calls += 1
+            return "{}"
+    cllm = CountLLM()
+    res = nr.compute_nutrition(cllm, goods["items"])
+    check("from_goods_count=2", res["from_goods_count"] == 2, str(res))
+    check("LLM 未被调用", cllm.calls == 0, f"calls={cllm.calls}")
+    check("能量仍 21450（取自商品主数据）", abs(res["totals"]["energy_kcal"] - 21450.0) < 0.1, str(res))
 
     print("T5 报表组装（含人均 + 分类占比）")
     rep = nr.build_nutrition_report(FakeClient(), FakeLLM(), "2026-08-17", "2026-08-17", "w1")
