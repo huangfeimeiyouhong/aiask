@@ -393,11 +393,43 @@ def compute_nutrition(llm, goods_items: list) -> dict:
 # ---------------------------------------------------------------------------
 # 5) 组装报表
 # ---------------------------------------------------------------------------
+def _resolve_warehouse_uuid(client, warehouse_uuid, warehouse_name):
+    """按权限兜底解析 warehouseUuid：
+    优先用调用方传入的 warehouse_uuid；若未传，调 query_warehouses 取当前用户
+    可见的第一个仓库作为兜底，保证下游必传 uuid 的接口不会空指针。
+    返回 (uuid, name, list_of_all_visible_warehouses)。
+    """
+    visible = []
+    try:
+        r = client.query_warehouses({})
+        whs = (r.get("data") or []) if r.get("success") else []
+        for w in whs:
+            visible.append({
+                "uuid": w.get("uuid") or w.get("warehouseUuid") or "",
+                "name": w.get("warehouseName") or w.get("name") or "",
+            })
+    except Exception:
+        pass
+    if warehouse_uuid:
+        nm = warehouse_name or next((w["name"] for w in visible if w["uuid"] == warehouse_uuid), "")
+        return warehouse_uuid, nm, visible
+    if visible:
+        return visible[0]["uuid"], warehouse_name or visible[0]["name"], visible
+    return "", warehouse_name or "", visible
+
+
 def build_nutrition_report(client, llm=None, begin_date: str = "",
                            end_date: str = "", warehouse_uuid: str | None = None,
                            warehouse_name: str | None = None) -> dict:
     """组装完整营养报表。llm 缺省时按环境自动获取（无密钥降级 Mock + 兜底表）。"""
     llm = llm or get_llm()
+    # 仓库兜底：按用户权限（query_warehouses 即按 session 权限返回）取首个仓库作为兜底，
+    # 避免下游 dish/menu/list 等必传 uuid 的接口报"仓库uuid不能为空"。
+    warehouse_uuid, warehouse_name, visible_wh = _resolve_warehouse_uuid(
+        client, warehouse_uuid, warehouse_name)
+    if not warehouse_uuid:
+        raise RuntimeError("当前账号无任何可见仓库，无法生成营养报表")
+
     menu = fetch_menu(client, begin_date, end_date, warehouse_uuid, warehouse_name)
     repast = fetch_repast_qty(client, begin_date, end_date, warehouse_uuid)
     goods = fetch_stock_out_by_goods(client, begin_date, end_date, warehouse_uuid)
@@ -438,4 +470,7 @@ def build_nutrition_report(client, llm=None, begin_date: str = "",
         },
         "nutrition": nutr,
         "per_capita": per_capita,
+        "warehouse_uuid": warehouse_uuid,
+        "warehouse_name": warehouse_name or menu.get("warehouse_name", ""),
+        "visible_warehouses": [w["name"] for w in visible_wh if w["name"]],
     }

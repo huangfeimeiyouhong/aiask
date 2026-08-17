@@ -264,11 +264,30 @@ async function loadWarehouses(){
     const j=await r.json();
     if(j.success && j.warehouses && j.warehouses.length){
       const sel=$("whSelect"); sel.innerHTML="";
-      const optAll=document.createElement("option"); optAll.value=""; optAll.textContent="全部仓库"; sel.appendChild(optAll);
-      j.warehouses.forEach(w=>{const o=document.createElement("option");o.value=w;o.textContent=w;sel.appendChild(o);});
+      // 不再加"全部仓库"项——下游接口必传仓库uuid。强制选第一个有权限的仓库。
+      j.warehouses.forEach((w,i)=>{
+        const o=document.createElement("option"); o.value=w; o.textContent=w;
+        sel.appendChild(o);
+      });
       sel.disabled=false;
+      current.warehouse=j.warehouses[0];
+      sel.value=current.warehouse;
+    }else{
+      const sel=$("whSelect");
+      sel.innerHTML='<option value="">当前账号无可见仓库</option>';
+      sel.disabled=true;
+      current.warehouse="";
+      $("goBtn").disabled=true;
+      $("hint").textContent="请联系管理员开通仓库权限";
     }
-  }catch(e){}
+  }catch(e){
+    const sel=$("whSelect");
+    sel.innerHTML='<option value="">仓库加载失败</option>';
+    sel.disabled=true;
+    current.warehouse="";
+    $("goBtn").disabled=true;
+    $("hint").textContent="仓库列表加载失败："+e.message;
+  }
 }
 
 // ---------- 查询 ----------

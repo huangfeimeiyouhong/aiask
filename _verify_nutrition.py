@@ -144,6 +144,48 @@ def main():
         "name": "猪肉", "category": "x", "unit": "斤", "qty": 1, "weight_g": 500.0,
         "unit_exact": True}])["model_based"] is False)
 
+    print("T7 仓库 uuid 兜底（按用户权限自动取首个）")
+
+    class NoWhClient(FakeClient):
+        def dish_menu(self, params=None):
+            # 验证：调菜单接口时 warehouseUuid 已被兜底成有权限仓库的 uuid
+            check("dish_menu 收到 warehouseUuid", bool(params.get("warehouseUuid")),
+                  str(params))
+            return super().dish_menu(params)
+        def query_warehouses(self, params=None):
+            return {"success": True, "data": [
+                {"uuid": "auto-wh-1", "warehouseName": "自动兜底仓"}]}
+
+    # 场景1：不传 warehouseUuid —— 应自动用 query_warehouses 返回的第一个仓库
+    rep = nr.build_nutrition_report(NoWhClient(), FakeLLM(), "2026-08-17", "2026-08-17",
+                                    warehouse_uuid="", warehouse_name="")
+    check("自动取首个仓库 uuid", rep["warehouse_uuid"] == "auto-wh-1", rep["warehouse_uuid"])
+    check("自动取首个仓库 name", rep["warehouse_name"] == "自动兜底仓", rep["warehouse_name"])
+    check("返回可见仓库列表", rep["visible_warehouses"] == ["自动兜底仓"])
+
+    # 场景2：显式传 warehouseUuid —— 应原样透传（不走兜底）
+    class WithWhClient(FakeClient):
+        def dish_menu(self, params=None):
+            check("显式 uuid 透传", params.get("warehouseUuid") == "explicit-wh")
+            return super().dish_menu(params)
+        def query_warehouses(self, params=None):
+            return {"success": True, "data": []}
+    rep2 = nr.build_nutrition_report(WithWhClient(), FakeLLM(), "2026-08-17", "2026-08-17",
+                                     warehouse_uuid="explicit-wh", warehouse_name="指定仓")
+    check("显式 uuid 透传", rep2["warehouse_uuid"] == "explicit-wh")
+
+    # 场景3：当前账号无任何仓库 —— 应明确报错
+    class EmptyWhClient(FakeClient):
+        def query_warehouses(self, params=None):
+            return {"success": True, "data": []}
+    raised = False
+    try:
+        nr.build_nutrition_report(EmptyWhClient(), FakeLLM(), "2026-08-17", "2026-08-17")
+    except RuntimeError as e:
+        raised = True
+        check("无仓库时报错", "无任何可见仓库" in str(e), str(e))
+    check("无仓库抛 RuntimeError", raised)
+
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
 
