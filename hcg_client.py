@@ -184,6 +184,20 @@ class HCGClient:
     def query_suppliers(self, params: dict | None = None) -> dict:
         return self._get("/hcgj-portal/api/wms/com/querySuppliers", params)
 
+    def page_goods(self, params: dict | None = None) -> dict:
+        """分页查询商品主数据（含营养字段）。路径实测：带 /api。
+
+        营养报表用它读取商品每 100g 营养（能量/蛋白质/脂肪/碳水），
+        避免回退大模型估算，提速且口径稳定。
+        """
+        p = dict(params or {})
+        p.setdefault("pageNo", 1)
+        p.setdefault("pageSize", 200)
+        return self._get("/hcgj-portal/api/wms/com/pageGoods", p)
+
+    def query_goods_category(self, params: dict | None = None) -> dict:
+        return self._get("/hcgj-portal/api/wms/com/queryGoodsCategory", params)
+
 
 def extract_warehouses(resp: dict | None) -> list:
     """从 queryWarehouses 响应里稳健提取仓库列表。
@@ -200,13 +214,6 @@ def extract_warehouses(resp: dict | None) -> list:
     if isinstance(data, dict):
         return data.get("records") or data.get("list") or []
     return []
-
-    def query_goods(self, params: dict | None = None) -> dict:
-        """查询商品列表（基础数据，不分页）。"""
-        return self._get("/hcgj-portal/api/wms/com/queryGoods", params)
-
-    def query_goods_category(self, params: dict | None = None) -> dict:
-        return self._get("/hcgj-portal/api/wms/com/queryGoodsCategory", params)
 
     # ---- 报表统计（服务端聚合，金额准确，无需翻页估算）----
     def get_purchase_ledger(self, params: dict | None = None) -> dict:

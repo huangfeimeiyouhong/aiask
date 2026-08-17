@@ -4,13 +4,15 @@
 数据源（均为后厨管家开放接口，经 HCGClient 代理调用）：
   1) /hcgj-portal/api/dish/menu/list          菜单（带 /api，beginDate/endDate/warehouseUuid 必传）
   2) /hcgj-portal/cost/meals/queryDateGroupStat 实际就餐人数（不带 /api！前缀混用，实测路径）
-  3) /hcgj-portal/api/wms/stock/pageStockOut   领料出库记录（按商品合并总重量）
-  4) get_llm() 大模型按商品名估算每 100g 营养值 → 折算总营养 / 人均营养
+  3) /hcgj-portal/api/wms/stock/pageStockOut   领料出库记录（按商品合并总重量；分类直接用记录自带 firstCategoryName）
+  4) /hcgj-portal/api/wms/com/pageGoods        商品主数据（含每 100g 营养字段，优先于大模型估算）
 
 口径：
   - 领料出库按业务口径包含采购越库（出库侧归入领料出库，与 metrics_registry 一致）。
+  - 分类直接用 pageStockOut 记录自带的 firstCategoryName（第一分类名称），不再额外 join 分类接口。
+  - 营养值优先取自商品主数据（pageGoods 每 100g 字段）；仅当商品主数据无营养字段时，
+    才回退大模型估算或内置食材营养表。主数据营养为非检测值，仅供参考。
   - 重量单位换算：公斤/斤/克 统一折算成克；无法识别单位时按 qty 当克估算并标注。
-  - 营养值为模型估算值（参考《中国食物成分表》量级），仅供参考，非精确检测值。
 """
 from __future__ import annotations
 
@@ -210,33 +212,14 @@ def fetch_repast_qty(client, begin_date: str, end_date: str,
 # ---------------------------------------------------------------------------
 # 3) 领料出库商品详情（按商品合并总重量）
 # ---------------------------------------------------------------------------
-def _build_category_map(client) -> dict:
-    """分类 uuid -> name 映射（树形递归，兼容 data 为 list 或 {records:[]} 两种结构）。"""
-    m = {}
-    try:
-        d = client.query_goods_category({})
-        if not d.get("success"):
-            return m
-        data = d.get("data") or {}
-        cats = data if isinstance(data, list) else (data.get("records") or data.get("list") or [])
-
-        def walk(items):
-            for c in items or []:
-                u = c.get("uuid")
-                if u:
-                    m[u] = c.get("name") or ""
-                walk(c.get("children") or c.get("childList") or [])
-
-        walk(cats)
-    except Exception:
-        pass
-    return m
-
-
 def _extract_goods_nutri(g: dict) -> dict | None:
     """从商品主数据记录里提取每 100g 营养值（能量/蛋白质/脂肪/碳水）。
 
-    字段命名兼容后排菜营养约定（nlKcal/dbzG/zfG/tshhwG）与常见英文/中文写法。
+    来源：pageGoods 商品主数据。兼容两类字段命名：
+      1) 后排菜营养约定（nlKcal/dbzG/zfG/tshhwG）；
+      2) 常见英文/中文写法（energy/热量/能量、protein/蛋白质、fat/脂肪、carb/碳水）；
+      3) 若存在嵌套营养对象（goodsNutrition / nutrition / nutri / foodNutrition）
+         则优先在该对象内查找。
     四个值都缺失时返回 None（交由大模型/兜底表处理）。
     """
     cand = {
@@ -246,48 +229,69 @@ def _extract_goods_nutri(g: dict) -> dict | None:
         "fat_g":       ("zfG", "fatG", "fat", "zf", "脂肪"),
         "carb_g":      ("tshhwG", "carbG", "carbohydrate", "carb", "tshhw", "碳水"),
     }
-    out = {}
-    for key, names in cand.items():
-        v = None
-        for n in names:
-            if g.get(n) not in (None, "", 0):
-                v = _num(g.get(n))
-                break
-        out[key] = v
-    if all(v in (None, 0) for v in out.values()):
+
+    def _pick(src: dict) -> dict:
+        out = {}
+        for key, names in cand.items():
+            v = None
+            for n in names:
+                if src.get(n) not in (None, "", 0):
+                    v = _num(src.get(n))
+                    break
+            out[key] = v
+        return out
+
+    # 先查顶层字段
+    top = _pick(g)
+    # 再查嵌套营养对象（若有）
+    nested = None
+    for nk in ("goodsNutrition", "nutrition", "nutri", "foodNutrition", "nutriInfo"):
+        obj = g.get(nk)
+        if isinstance(obj, dict):
+            nested = _pick(obj)
+            break
+    # 合并：嵌套优先于顶层（避免顶层放的是别的东西）
+    merged = {}
+    for key in cand:
+        v = (nested or {}).get(key)
+        if v in (None, 0):
+            v = top.get(key)
+        merged[key] = v
+    if all(v in (None, 0) for v in merged.values()):
         return None
-    return out
+    return merged
 
 
 def _build_goods_map(client) -> dict:
-    """goodsUuid -> {name, category, unit, nutri100}。
+    """goodsUuid -> {name, nutri100}。
 
-    兼容字段命名：queryGoods 真实返回常见 goodsFirstCategoryUuid/goodsFirstCategoryName，
-    而非 firstCategoryUuid/firstCategoryName；同时兼容 list / {records:[]} 两种响应结构。
-    nutri100 为商品主数据自带的营养（每 100g），存在时优先于大模型估算。
+    营养取自 pageGoods 商品主数据（每 100g 营养字段），存在时优先于大模型估算。
+    分类不再由本函数提供——营养报表直接用 pageStockOut 记录自带的 firstCategoryName。
+    商品可能较多，按 pageGoods 分页拉全量（最多 50 页），建 uuid -> 营养映射。
     """
     m = {}
     try:
-        d = client.query_goods({})
-        if not d.get("success"):
-            return m
-        data = d.get("data") or {}
-        goods = data if isinstance(data, list) else (data.get("records") or data.get("list") or [])
-        cat_map = _build_category_map(client)
-        for g in goods:
-            gu = g.get("uuid")
-            if not gu:
-                continue
-            # 优先用 goodsFirstCategory*（与库存记录字段命名一致），再回退 firstCategory*
-            cu = g.get("goodsFirstCategoryUuid") or g.get("firstCategoryUuid")
-            cn = g.get("goodsFirstCategoryName") or g.get("firstCategoryName")
-            m[gu] = {
-                "name": g.get("goodsName") or g.get("name") or "未知商品",
-                "category": cat_map.get(cu) or cn or "未分类",
-                "unit": g.get("standardUnit") or g.get("unit")
-                        or g.get("goodsUnit") or "",
-                "nutri100": _extract_goods_nutri(g),
-            }
+        page = 1
+        while True:
+            d = client.page_goods({"pageNo": page, "pageSize": 200})
+            if not d.get("success"):
+                break
+            data = d.get("data") or {}
+            goods = data.get("records") if isinstance(data, dict) else data
+            if not goods:
+                break
+            for g in goods:
+                gu = g.get("uuid")
+                if not gu:
+                    continue
+                m[gu] = {
+                    "name": g.get("goodsName") or g.get("name") or "未知商品",
+                    "nutri100": _extract_goods_nutri(g),
+                }
+            pages = data.get("pages", 1) if isinstance(data, dict) else 1
+            if page >= pages or page >= 50:
+                break
+            page += 1
     except Exception:
         pass
     return m
@@ -356,10 +360,10 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
             continue
         q = _num(r.get("qty"))
         info = goods_map.get(gu) or {}
-        # 分类优先级：出库记录自带的分类名（与库存查询一致，records 自带 firstCategoryName）
-        #   -> 商品主数据 join 出的分类名 -> 兜底「未分类」
+        # 分类：直接用 pageStockOut 记录自带的 firstCategoryName（第一分类名称），
+        # 不再额外 join 商品分类接口（用户确认该字段即可当分类用）。
         cat = (r.get("firstCategoryName") or r.get("goodsFirstCategoryName")
-               or info.get("category") or "未分类")
+               or "未分类")
         # 营养优先级：商品主数据 nutri100 -> 出库记录自带的营养字段 -> 后续大模型/兜底表
         nutri100 = info.get("nutri100") or _extract_goods_nutri(r)
         a = agg.setdefault(gu, {
