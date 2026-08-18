@@ -131,10 +131,47 @@ AI 问数提供 `/api/logout`（清除服务端会话 + 清 Cookie）。可选�
 
 ---
 
-## 七、联调检查清单
+## 七、常见问题排查
+
+### Q1：本地带 token 能登录，部署到服务器后仍跳回登录页
+
+**典型现象**：浏览器地址栏显示 `http://<服务器IP>:8011/?token=xxxx`，然后页面是登录框。
+
+**根因**：跳转 URL 拼错了路径。AI 问数只在 `/sso` 端点处理 token，根路径 `/` 不会自动用 token 登录。
+
+**正确 URL**：
+```
+http://<服务器IP>:8011/sso?token=xxxx&username=xxx&dataVersion=xxx&redirect=/
+```
+
+**错误 URL**（截图中常见）：
+```
+http://<服务器IP>:8011/?token=xxxx   ← 缺少 /sso
+```
+
+**修复**：检查后厨管家侧「AI 问数」菜单的跳转地址，确保 base URL 后接 `/sso`，不要只拼到根路径。
+
+> 自 `2026-08-18` 起，`index.html` 已加兼容兜底：根路径带 `?token=` 且不带 `?sso=` 时会自动重定向到 `/sso`。但**正确做法仍是直接跳 `/sso`**，不要依赖兜底。
+
+### Q2：token 明明有效，却提示「单点登录失效」
+
+可能原因：
+1. 服务器 `.env` 里的 `HCG_BASE_URL` 与 token 所属环境不一致（例如用生产的 token 去调测试环境接口）。
+2. token 在传输中被截断或 URL 编码错误（注意 `+`、空格、`/` 等字符必须 `URLEncoder.encode`）。
+3. token 已经过期（后厨管家 token 有有效期，过期后需重新进入）。
+
+排查：在服务器上执行 `curl -v "http://127.0.0.1:8011/sso?token=<token>&redirect=/"`，观察是 `302 Location: /`（成功）还是 `302 Location: /?sso=invalid`（失败）。
+
+### Q3：内嵌 iframe 中登录态丢失
+
+- 检查浏览器控制台是否有 Cookie 被拦截的警告。
+- 若 AI 问数与后厨管家**跨域**且用 HTTP，需将 `app.py` 中 `_set_cookie` 的 `SameSite=Lax` 改为 `SameSite=None; Secure`，并启用 HTTPS。
+- 最简单方案：菜单用「新标签页打开 `/sso`」，避开 iframe Cookie 策略问题。
+
+## 八、联调检查清单
 
 - [ ] 后厨管家后台能拿到当前用户的 `token` / `dataVersion`
-- [ ] 菜单跳转 URL 正确拼接并 `URLEncoder` 编码
+- [ ] 菜单跳转 URL 正确拼接为 `<AIQA_BASE_URL>/sso?token=...`（注意是 `/sso` 不是 `/`）
 - [ ] 浏览器跳转 `/sso` 后能被正确 302 到问数主页（地址栏不再含 token）
 - [ ] 问数主页能正常以该用户身份查数（权限与后厨管家一致）
 - [ ] token 失效 / 过期时，重新从后厨管家进入可恢复

@@ -1972,6 +1972,16 @@ function observeReveals(root) {
   if (!revealObs) { els.forEach(el => el.classList.add("revealed")); return; }
   els.forEach(el => revealObs.observe(el));
 }
+// 兼容性兜底：若后端/网关误把 token 拼在根路径（/?token=...），自动转发到 /sso。
+// 正常应直接跳转 /sso?token=...，此兜底防止老旧配置或不同环境配错路径。
+(function(){
+  const u = new URL(location.href);
+  if (u.pathname === "/" && u.searchParams.has("token") && !u.searchParams.has("sso")) {
+    u.pathname = "/sso";
+    location.replace(u.href);
+  }
+})();
+
 initTheme();
 
 // 进入时：恢复本地历史 + 检查登录态
