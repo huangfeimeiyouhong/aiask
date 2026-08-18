@@ -201,6 +201,21 @@ footer{text-align:center;color:var(--ink3);font-size:12px;padding:20px 0}
 /* 进场淡入 */
 .fade{animation:fade .5s ease both}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* DRIs 对比柱状图 */
+.dri-box{margin-top:18px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px}
+.dri-title{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.dri-title::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--grad)}
+.dri-chart{width:100%;height:260px}
+.dri-source{font-size:11px;color:var(--ink3);margin-top:6px;text-align:right;line-height:1.4}
+@media(max-width:900px){.dri-chart{height:220px}}
+
+/* 领料分类折叠 */
+.cat-body.collapsed .item{display:none}
+.cat-body .grp{cursor:pointer;user-select:none}
+.cat-body .grp .arrow{display:inline-block;width:14px;font-size:10px;color:var(--ink3);transition:.2s;margin-right:4px}
+.cat-body:not(.collapsed) .grp .arrow{transform:rotate(90deg)}
+.cat-body .grp .perw{font-size:11px;font-weight:500;color:var(--b1);background:#eef1ff;padding:2px 8px;border-radius:999px;margin-left:8px}
 </style>
 </head>
 <body>
@@ -290,6 +305,11 @@ footer{text-align:center;color:var(--ink3);font-size:12px;padding:20px 0}
       </div>
       <div class="nut-grid" id="nutRow"></div>
       <div class="note" id="nutNote"></div>
+      <div class="dri-box">
+        <div class="dri-title">人均摄入 vs 中国居民膳食参考摄入量（DRIs）</div>
+        <div class="dri-chart" id="driBox"></div>
+        <div class="dri-source" id="driSource"></div>
+      </div>
     </div>
 
     <div class="sec">
@@ -330,6 +350,7 @@ const MEAL_ORDER = ["meal","mSnack","lunch","aSnack","dinner","night","fruit","o
 const STATUS_MAP = {initial:"待审核",audited:"已审核",reject:"已驳回",draft:"草稿",submit:"待提交"};
 let current = {mode:"day", date:todayStr(), warehouse:""};
 let imgBase = "";
+let driChart=null;
 
 function todayStr(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function fmt(n){ return (n===null||n===undefined||isNaN(n)) ? "-" : Number(n).toLocaleString("zh-CN",{maximumFractionDigits:1}); }
@@ -433,6 +454,7 @@ function render(j){
   const so=j.stock_out||{};
   const nut=j.nutrition||{};
   const per=j.per_capita;
+  const dri=j.dri||{};
   const rpTotal=repast.total;
 
   // KPI
@@ -466,6 +488,7 @@ function render(j){
     + `</div>`;
   const nn=$("nutNote");
   if(nut.note){ nn.textContent="ℹ️ "+nut.note; nn.classList.add("show"); } else nn.classList.remove("show");
+  renderDriBar(per, dri);
 
   // 菜单
   $("menuSub").textContent = `查询区间 ${menu.begin_date} ~ ${menu.end_date}`;
@@ -480,7 +503,7 @@ function render(j){
   if (soMsg) { soNoteEl.textContent = "ℹ️ " + soMsg; soNoteEl.classList.add("show"); }
   else soNoteEl.classList.remove("show");
   renderPie(so.category_ratio||[]);
-  const groups = renderTable(so.goods||[]);
+  const groups = renderTable(so.goods||[], rpTotal);
   renderBar(groups);
 }
 
@@ -589,9 +612,49 @@ function renderBar(groups){
     barChart.resize();
   });
 }
-window.addEventListener("resize",()=>{ if(pieChart) pieChart.resize(); if(barChart) barChart.resize(); });
+window.addEventListener("resize",()=>{ if(pieChart) pieChart.resize(); if(barChart) barChart.resize(); if(driChart) driChart.resize(); });
 
-function renderTable(goods){
+function renderDriBar(per, dri){
+  const box=$("driBox");
+  const src=$("driSource");
+  if(!dri || !dri.energy_kcal){
+    box.innerHTML=`<div class="empty" style="padding:40px 0"><div class="t">暂无 DRIs 参考数据</div></div>`;
+    src.textContent="";
+    return;
+  }
+  if(driChart){ driChart.dispose(); driChart=null; }
+  const hasPer=!!(per && per.energy_kcal!=null && per.protein_g!=null && per.fat_g!=null && per.carb_g!=null);
+  const labels=["能量","蛋白质","脂肪","碳水化合物"];
+  const units=["千卡","克","克","克"];
+  const cur=hasPer?[per.energy_kcal,per.protein_g,per.fat_g,per.carb_g]:[0,0,0,0];
+  const ref=[dri.energy_kcal,dri.protein_g,dri.fat_g,dri.carb_g];
+  const curRatio=cur.map((v,i)=> ref[i]? Math.round(v/ref[i]*1000)/10 : 0);
+  const noteTip=hasPer?"":"<span style='color:#f59e0b'>⚠ 暂无数值（缺就餐人数）</span> · 当前人均按 0 展示，仅用于和国标参考对比。";
+  requestAnimationFrame(()=>{
+    driChart=echarts.init(box);
+    driChart.setOption({
+      tooltip:{trigger:"axis",axisPointer:{type:"shadow"},formatter:function(params){
+        const idx=params[0].dataIndex;
+        const curText=hasPer?fmt(cur[idx])+" "+units[idx]:"暂无数据（缺就餐人数）";
+        return `<b>${labels[idx]}</b><br/>`+
+          params.map(p=>`${p.marker} ${p.seriesName}：${fmt(p.value)}%`).join("<br/>")+
+          `<br/>当前人均：${curText}<br/>国标参考：${fmt(ref[idx])} ${units[idx]}`;
+      }},
+      legend:{data:["当前人均（%）","国标参考（%）"],top:0,right:0,textStyle:{fontSize:11,color:"var(--ink2)"}},
+      grid:{left:8,right:18,top:34,bottom:24,containLabel:true},
+      xAxis:{type:"category",data:labels,axisLabel:{fontSize:11,color:"var(--ink)"},axisLine:{lineStyle:{color:"#e5e9f5"}},axisTick:{show:false}},
+      yAxis:{type:"value",name:"达标比例（%）",nameTextStyle:{fontSize:11,color:"var(--ink2)"},axisLabel:{fontSize:10,color:"#6b7280",formatter:"{value} %"},splitLine:{lineStyle:{color:"#f0f2fa"}}},
+      series:[
+        {name:"当前人均（%）",type:"bar",barWidth:"30%",data:curRatio,itemStyle:{borderRadius:[6,6,0,0],color:{type:"linear",x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:"#2f6bff"},{offset:1,color:"#7c5cff"}]}}},
+        {name:"国标参考（%）",type:"bar",barWidth:"30%",data:[100,100,100,100],itemStyle:{borderRadius:[6,6,0,0],color:"#e2e8f0"}}
+      ]
+    });
+    driChart.resize();
+  });
+  src.innerHTML=noteTip+" 参考："+(dri.source||"");
+}
+
+function renderTable(goods, totalPeople){
   const tb=$("soTable");
   if(!goods.length){ tb.innerHTML=`<tr><td class="empty" style="padding:30px">暂无领料出库数据</td></tr>`; return []; }
   // 按分类排序，分类内按商品名排序
@@ -617,37 +680,45 @@ function renderTable(goods){
     totals.protein_g+=Number(g.protein_g)||0; totals.fat_g+=Number(g.fat_g)||0; totals.carb_g+=Number(g.carb_g)||0;
   });
   const grpLabel=(cat,count)=>`<span class="gdot"></span>${esc(cat)} <span class="gcount">${count} 种</span>`;
+  const perW=(w)=> totalPeople ? w/totalPeople : 0;
   let body=`<thead><tr>
-    <th>商品</th><th>单位</th><th class="num">数量</th><th class="num">重量(g)</th>
+    <th>商品</th><th>单位</th><th class="num">数量</th><th class="num">重量(g)</th><th class="num">人均克重(g)</th>
     <th class="num">能量(kcal)</th><th class="num">蛋白(g)</th><th class="num">脂肪(g)</th><th class="num">碳水(g)</th>
-  </tr></thead><tbody>`;
+  </tr></thead>`;
   groups.forEach(g=>{
-    body+=`<tr class="grp"><td colspan="3">${grpLabel(g.cat,g.items.length)}</td>
-      <td class="num">${fmt(g.weight_g)}</td>
-      <td class="num">${fmt(g.energy_kcal)}</td>
-      <td class="num">${fmt(g.protein_g)}</td>
-      <td class="num">${fmt(g.fat_g)}</td>
-      <td class="num">${fmt(g.carb_g)}</td></tr>`;
+    const gPerW=perW(g.weight_g);
+    body+=`<tbody class="cat-body collapsed">
+      <tr class="grp" onclick="this.closest('tbody').classList.toggle('collapsed');this.classList.toggle('expanded')">
+        <td colspan="3"><span class="arrow">▶</span>${grpLabel(g.cat,g.items.length)}<span class="perw">人均 ${fmt(gPerW)} g/人</span></td>
+        <td class="num">${fmt(g.weight_g)}</td>
+        <td class="num">${fmt(gPerW)}</td>
+        <td class="num">${fmt(g.energy_kcal)}</td>
+        <td class="num">${fmt(g.protein_g)}</td>
+        <td class="num">${fmt(g.fat_g)}</td>
+        <td class="num">${fmt(g.carb_g)}</td>
+      </tr>`;
     g.items.forEach(item=>{
       body+=`<tr class="item">
         <td><b>${esc(item.name)}</b></td>
         <td>${esc(item.unit||"-")}</td>
         <td class="num">${fmt(item.qty)}</td>
         <td class="num">${fmt(item.weight_g)}</td>
+        <td class="num">-</td>
         <td class="num">${fmt(item.energy_kcal)}</td>
         <td class="num">${fmt(item.protein_g)}</td>
         <td class="num">${fmt(item.fat_g)}</td>
         <td class="num">${fmt(item.carb_g)}</td>
       </tr>`;
     });
+    body+=`</tbody>`;
   });
-  body+=`<tr class="total"><td colspan="3">合计 <span class="gcount">${totals.count} 种</span></td>
+  body+=`<tfoot><tr class="total"><td colspan="3">合计 <span class="gcount">${totals.count} 种</span></td>
     <td class="num">${fmt(totals.weight_g)}</td>
+    <td class="num">${fmt(perW(totals.weight_g))}</td>
     <td class="num">${fmt(totals.energy_kcal)}</td>
     <td class="num">${fmt(totals.protein_g)}</td>
     <td class="num">${fmt(totals.fat_g)}</td>
-    <td class="num">${fmt(totals.carb_g)}</td></tr>`;
-  body+=`</tbody>`;
+    <td class="num">${fmt(totals.carb_g)}</td></tr></tfoot>`;
   tb.innerHTML=body;
   return groups;
 }

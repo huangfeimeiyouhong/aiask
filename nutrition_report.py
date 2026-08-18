@@ -102,6 +102,16 @@ LINGLIAO_OUT_CODES = {"pickingOut", "purchaseCrossOut"}
 LINGLIAO_TYPE_TEXTS = {"领料出库", "采购越库"}
 LINGLIAO_KEYWORDS = ("领料", "越库")  # 中文关键字兜底
 
+# 中国居民膳食营养素参考摄入量（DRIs 2023）参考值
+# 18-49岁轻体力活动成年人每日平均参考；脂肪/碳水按供能比中位数折算。
+DRIS_2023_ADULT = {
+    "energy_kcal": 2000,
+    "protein_g": 60,
+    "fat_g": 55,
+    "carb_g": 280,
+    "source": "《中国居民膳食营养素参考摄入量》（2023版），18-49岁轻体力活动成年人平均值；脂肪/碳水按供能比中位数折算，仅供参考",
+}
+
 
 def _is_lingliao_type(out_type: str, type_text: str = "") -> bool:
     """判断是否「领料出库 / 采购越库」（营养报表统计口径，精确）。
@@ -765,6 +775,7 @@ def build_nutrition_report(client, llm=None, begin_date: str = "",
         },
         "nutrition": nutr,
         "per_capita": per_capita,
+        "dri": DRIS_2023_ADULT,
         "warehouse_uuid": warehouse_uuid,
         "warehouse_name": warehouse_name or menu.get("warehouse_name", ""),
         "visible_warehouses": [w["name"] for w in visible_wh if w["name"]],
