@@ -4,19 +4,23 @@
 数据源（均为后厨管家开放接口，经 HCGClient 代理调用）：
   1) /hcgj-portal/api/dish/menu/list          菜单（带 /api，beginDate/endDate/warehouseUuid 必传）
   2) /hcgj-portal/cost/meals/queryDateGroupStat 实际就餐人数（不带 /api！前缀混用，实测路径）
-  3) /hcgj-portal/api/wms/stock/pageStockOut   领料出库记录（按商品合并总重量；分类直接用记录自带 firstCategoryName）
-  4) /hcgj-portal/api/wms/com/pageGoods        商品主数据（含每 100g 营养字段，优先于大模型估算）
+  3) /hcgj-portal/api/wms/stock/pageStockOut   领料出库记录（按商品合并总重量；分类优先用记录自带 firstCategoryName）
+  4) /hcgj-portal/api/wms/com/pageGoods        商品主数据（含每 100g 营养字段 + firstCategoryUuid）
+  5) /hcgj-portal/api/wms/com/queryGoodsCategory  商品分类树（firstCategoryName 为空时按 uuid 还原分类名）
 
 口径：
   - 领料出库按业务口径包含采购越库（出库侧归入领料出库，与 metrics_registry 一致）。
-  - 分类直接用 pageStockOut 记录自带的 firstCategoryName（第一分类名称），不再额外 join 分类接口。
-  - 营养值优先取自商品主数据（pageGoods 每 100g 字段）；仅当商品主数据无营养字段时，
-    才回退大模型估算或内置食材营养表。主数据营养为非检测值，仅供参考。
+  - 分类：优先用 pageStockOut 记录自带的 firstCategoryName（第一分类名称）；为空时，
+    用商品主数据的 firstCategoryUuid 经 queryGoodsCategory 还原分类名（兜底）。
+  - 营养值优先级：① 商品主数据每 100g 营养字段 > ② 内置食材营养表（确定性、无需联网）
+    > ③ 大模型估算（仅 NUTRITION_USE_LLM=1 时启用，默认关闭）。默认不调大模型，
+    报表生成无数十秒模型等待；主数据营养为非检测值，仅供参考。
   - 重量单位换算：公斤/斤/克 统一折算成克；无法识别单位时按 qty 当克估算并标注。
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import defaultdict
 
@@ -262,14 +266,39 @@ def _extract_goods_nutri(g: dict) -> dict | None:
     return merged
 
 
-def _build_goods_map(client) -> dict:
-    """goodsUuid -> {name, nutri100}。
+def _build_category_map(client) -> dict:
+    """分类 uuid -> name 映射（queryGoodsCategory 扁平列表，兼容 records/list 两种结构）。
 
-    营养取自 pageGoods 商品主数据（每 100g 营养字段），存在时优先于大模型估算。
-    分类不再由本函数提供——营养报表直接用 pageStockOut 记录自带的 firstCategoryName。
-    商品可能较多，按 pageGoods 分页拉全量（最多 50 页），建 uuid -> 营养映射。
+    用于：当 pageStockOut 记录的 firstCategoryName 为空时，用商品主数据的
+    firstCategoryUuid 还原一级分类名（部分账号的采购越库记录 firstCategoryName 为空）。
+    单次调用，失败则返回空映射（不影响主流程）。
     """
     m = {}
+    try:
+        d = client.query_goods_category({})
+        if not d.get("success"):
+            return m
+        data = d.get("data") or {}
+        cats = data if isinstance(data, list) else (data.get("records") or data.get("list") or [])
+        for c in cats:
+            u = c.get("uuid")
+            if u:
+                m[u] = c.get("name") or ""
+    except Exception:
+        pass
+    return m
+
+
+def _build_goods_map(client) -> dict:
+    """goodsUuid -> {name, nutri100, category}。
+
+    营养取自 pageGoods 商品主数据（每 100g 营养字段），存在时优先于大模型估算。
+    分类优先用 pageStockOut 记录自带的 firstCategoryName；该字段为空时，
+    用商品主数据的 firstCategoryUuid 经 queryGoodsCategory 还原分类名（兜底）。
+    商品可能较多，按 pageGoods 分页拉全量（最多 50 页），建 uuid -> 映射。
+    """
+    m = {}
+    cat_map = _build_category_map(client)
     try:
         page = 1
         while True:
@@ -284,9 +313,12 @@ def _build_goods_map(client) -> dict:
                 gu = g.get("uuid")
                 if not gu:
                     continue
+                # 分类：商品主数据自带 firstCategoryName 优先；否则用 firstCategoryUuid 还原
+                cat = g.get("firstCategoryName") or cat_map.get(g.get("firstCategoryUuid")) or ""
                 m[gu] = {
                     "name": g.get("goodsName") or g.get("name") or "未知商品",
                     "nutri100": _extract_goods_nutri(g),
+                    "category": cat,
                 }
             pages = data.get("pages", 1) if isinstance(data, dict) else 1
             if page >= pages or page >= 50:
@@ -360,10 +392,11 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
             continue
         q = _num(r.get("qty"))
         info = goods_map.get(gu) or {}
-        # 分类：直接用 pageStockOut 记录自带的 firstCategoryName（第一分类名称），
-        # 不再额外 join 商品分类接口（用户确认该字段即可当分类用）。
+        # 分类：优先用 pageStockOut 记录自带的 firstCategoryName（第一分类名称）；
+        # 该字段为空时（如采购越库记录），回退用商品主数据的 firstCategoryUuid 还原的分类名；
+        # 仍无则「未分类」。
         cat = (r.get("firstCategoryName") or r.get("goodsFirstCategoryName")
-               or "未分类")
+               or info.get("category") or "未分类")
         # 营养优先级：商品主数据 nutri100 -> 出库记录自带的营养字段 -> 后续大模型/兜底表
         nutri100 = info.get("nutri100") or _extract_goods_nutri(r)
         a = agg.setdefault(gu, {
@@ -437,16 +470,19 @@ def _fallback_100g(name: str):
 def compute_nutrition(llm, goods_items: list) -> dict:
     """对商品列表估算每 100g 营养值。
 
-    优先级：① 商品主数据自带营养（nutri100，每 100g）> ② 大模型估算 > ③ 内置食材营养兜底表。
-    仅当存在缺主数据营养的商品时才调用大模型（节省开销）。
+    优先级：① 商品主数据自带营养（nutri100，每 100g）> ② 内置食材营养兜底表
+    （参考《中国食物成分表》量级，确定性、无需联网）> ③ 大模型估算（仅当显式开启
+    NUTRITION_USE_LLM=1 时启用，默认关闭——营养以商品主数据为准，不依赖大模型猜测）。
+
+    注意：默认不再调用大模型，因此报表生成不再有 ~数十秒的模型等待，速度显著更快。
     """
     if not goods_items:
         return {"items": [], "note": "无领料出库商品"}
-    # 仅对缺失主数据营养的商品走大模型
+    # 仅当显式开启且存在缺主数据营养的商品时，才走大模型（默认关闭）
+    use_model = os.environ.get("NUTRITION_USE_LLM") == "1"
     need_llm = [g for g in goods_items if not g.get("nutri100")]
     llm_result = {}
-    use_model = True
-    if need_llm:
+    if use_model and need_llm and llm is not None:
         names = [g["name"] for g in need_llm]
         system = ("你是营养学专家，熟悉《中国食物成分表》。根据食物名称估算其"
                   "每100克可食部营养成分。只输出 JSON，不要任何其它文字。")
@@ -469,8 +505,6 @@ def compute_nutrition(llm, goods_items: list) -> dict:
                                       _num(g.get("carb_g")))
         except Exception:
             llm_result = {}
-    if not llm_result:
-        use_model = False
 
     items = []
     from_goods = 0  # 命中商品主数据自带营养的商品数
@@ -512,14 +546,15 @@ def compute_nutrition(llm, goods_items: list) -> dict:
         note = "营养值取自商品主数据（每 100g），非实验室检测值。"
     elif from_goods > 0:
         note = (f"营养值优先取自商品主数据（{from_goods}/{len(items)} 种），"
-                f"其余由大模型估算；非实验室检测值。")
+                f"其余由{'大模型估算' if use_model else '内置食材营养表'}；非实验室检测值。")
     elif use_model:
         note = ("营养值为大模型按食材估算，非实验室检测值，仅供参考。"
                 "（未从商品主数据识别到营养字段，已回退大模型；"
                 "如商品详情含营养字段，请告知字段名或贴一条商品记录）")
     else:
         note = ("营养值为内置食材营养表估算（参考《中国食物成分表》量级），"
-                "非实验室检测值；未识别食材按默认值估算。")
+                "非实验室检测值；未识别食材按默认值估算。"
+                "（默认不调用大模型；如需模型估算可设置 NUTRITION_USE_LLM=1）")
     return {"items": items, "totals": totals, "total_weight_g": total_weight,
             "note": note, "model_based": use_model, "from_goods_count": from_goods}
 
