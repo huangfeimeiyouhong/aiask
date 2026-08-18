@@ -91,19 +91,19 @@ a{color:var(--b1);text-decoration:none}
 .meals{display:flex;flex-direction:column}
 .meal-row{display:flex;gap:14px;padding:14px 18px;border-bottom:1px dashed var(--line);flex-wrap:wrap}
 .meal-row:last-child{border-bottom:0}
-.meal-tag{flex:0 0 64px;display:flex;align-items:center;justify-content:center}
-.meal-tag span{font-size:12px;font-weight:600;padding:5px 10px;border-radius:999px;color:#fff;background:var(--grad)}
+.meal-tag{flex:0 0 76px;display:flex;align-items:center;justify-content:center}
+.meal-tag span{font-size:12px;font-weight:600;padding:5px 10px;border-radius:999px;color:#fff;background:var(--grad);display:inline-flex;align-items:center;gap:4px}
 .meal-tag span.breakfast{background:linear-gradient(135deg,#fb923c,#f59e0b)}
 .meal-tag span.lunch{background:linear-gradient(135deg,#2f6bff,#7c5cff)}
 .meal-tag span.dinner{background:linear-gradient(135deg,#6366f1,#8b5cf6)}
 .meal-tag span.night{background:linear-gradient(135deg,#475569,#334155)}
 .meal-tag span.other{background:linear-gradient(135deg,#94a3b8,#64748b)}
-.dishes{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
-.dish{display:flex;gap:12px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px;transition:.2s}
+.dishes{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.dish{display:flex;gap:12px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px;transition:.2s;align-items:flex-start}
 .dish:hover{box-shadow:0 8px 20px rgba(47,107,255,.12);transform:translateY(-2px);border-color:#c9d4ff}
-.dish .img{width:74px;height:74px;border-radius:10px;flex:0 0 74px;object-fit:cover;background:linear-gradient(135deg,#e8edff,#f3ecff);border:1px solid var(--line)}
-.dish .imgph{width:74px;height:74px;border-radius:10px;flex:0 0 74px;display:flex;align-items:center;justify-content:center;
-  font-size:26px;color:#fff;background:var(--grad)}
+.dish .img{width:96px;height:96px;border-radius:10px;flex:0 0 96px;object-fit:cover;background:#fff;border:1px solid var(--line)}
+.dish .imgph{width:96px;height:96px;border-radius:10px;flex:0 0 96px;display:flex;align-items:center;justify-content:center;
+  font-size:38px;background:#f8fafc;color:#c4cbd8;border:1px solid var(--line)}
 .dish .info{min-width:0;flex:1}
 .dish .nm{font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .dish .nm .rec{font-size:10px;background:var(--grad);color:#fff;padding:1px 6px;border-radius:6px}
@@ -114,15 +114,22 @@ a{color:var(--b1);text-decoration:none}
 .dish .foot .ms{color:var(--b2);font-weight:600}
 /* 双栏：饼图 + 明细 */
 .double{display:grid;grid-template-columns:340px 1fr;gap:18px}
-.pie-box{min-height:300px}
-@media(max-width:900px){.double{grid-template-columns:1fr}}
+.pie-box{width:100%;height:300px;min-height:300px}
+@media(max-width:900px){.double{grid-template-columns:1fr}.pie-box{height:260px}}
 table.detail{width:100%;border-collapse:collapse;font-size:13px}
 table.detail th{position:sticky;top:0;background:#f6f8ff;color:var(--ink2);font-weight:600;
   padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
 table.detail td{padding:9px 10px;border-bottom:1px solid #f0f2fa;white-space:nowrap}
 table.detail tr:hover td{background:#fafbff}
 table.detail .num{text-align:right;font-variant-numeric:tabular-nums}
-.tbl-scroll{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:12px}
+.tbl-scroll{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:12px}
+table.detail tr.grp td{background:#f8faff;border-bottom:1px solid #e3e9f5;font-weight:700;color:var(--ink)}
+table.detail tr.grp .gdot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--grad);margin-right:8px;vertical-align:1px}
+table.detail tr.grp .gcount{font-size:11px;font-weight:500;color:var(--ink2);background:#eef1ff;padding:2px 8px;border-radius:999px;margin-left:8px}
+table.detail tr.grp .num{font-weight:700;color:var(--ink)}
+table.detail tr.item td{background:#fff}
+table.detail tr.total td{background:linear-gradient(90deg,#f6f8ff,#f0f4ff);border-top:2px solid #d5ddff;border-bottom:0;font-weight:800;color:var(--ink)}
+table.detail tr.total .num{color:var(--b1)}
 .note{background:#fff8e6;border:1px solid #ffe4a8;color:#92600a;border-radius:10px;padding:10px 14px;
   font-size:12px;margin-top:14px;display:none}
 .note.show{display:block}
@@ -137,9 +144,62 @@ table.detail .num{text-align:right;font-variant-numeric:tabular-nums}
   padding:12px 16px;font-size:13px;margin-bottom:16px}
 .err.show{display:block}
 footer{text-align:center;color:var(--ink3);font-size:12px;padding:20px 0}
+
+/* ===== 活泼化：插画 / 图标 / 轻柔装饰 ===== */
+/* 背景漂浮光斑（极淡，避免视觉疲劳） */
+.deco{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.deco i{position:absolute;display:block;border-radius:50%;filter:blur(2px);opacity:.55;animation:float 9s ease-in-out infinite}
+.deco i.b1{width:130px;height:130px;left:-36px;top:130px;background:radial-gradient(circle at 30% 30%,rgba(124,92,255,.20),transparent 70%)}
+.deco i.b2{width:96px;height:96px;right:46px;top:300px;background:radial-gradient(circle at 30% 30%,rgba(6,182,212,.18),transparent 70%);animation-delay:-3s}
+.deco i.b3{width:74px;height:74px;right:140px;bottom:90px;background:radial-gradient(circle at 30% 30%,rgba(47,107,255,.16),transparent 70%);animation-delay:-5s}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-18px)}}
+.wrap,.topbar{position:relative;z-index:1}
+
+/* Hero 插画卡 */
+.hero{display:flex;align-items:center;gap:24px;background:linear-gradient(120deg,#eef3ff,#f6f0ff 58%,#eafaff);
+  border:1px solid var(--line);border-radius:22px;padding:22px 28px;margin-bottom:22px;
+  box-shadow:var(--shadow);overflow:hidden;position:relative}
+.hero::after{content:"";position:absolute;right:-40px;top:-40px;width:160px;height:160px;border-radius:50%;
+  background:radial-gradient(circle,rgba(124,92,255,.16),transparent 70%)}
+.hero .htxt{flex:1;min-width:0;position:relative;z-index:1}
+.hero h1{font-size:26px;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{color:var(--ink2);font-size:13px;margin-top:6px;max-width:560px;line-height:1.6}
+.hero .pill{display:inline-flex;align-items:center;gap:6px;margin-top:14px;padding:6px 14px;border-radius:999px;
+  background:#fff;border:1px solid var(--line);font-size:12px;color:var(--ink2);box-shadow:var(--shadow-sm)}
+.hero .illo{width:208px;flex:0 0 208px;animation:bob 6s ease-in-out infinite;position:relative;z-index:1}
+@keyframes bob{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-10px) rotate(1deg)}}
+@media(max-width:760px){.hero{flex-direction:column;text-align:center}.hero .illo{width:168px}}
+
+/* KPI 图标徽章 */
+.kpi{display:flex;gap:14px;align-items:flex-start}
+.kpi .badge{width:46px;height:46px;flex:0 0 46px;border-radius:14px;background:var(--grad);
+  display:flex;align-items:center;justify-content:center;font-size:22px;
+  box-shadow:0 6px 16px rgba(47,107,255,.28);margin-top:2px}
+.kpi .body{flex:1;min-width:0}
+.kpi .v{font-size:24px}
+
+/* 区块图标 */
+.sec-head .ico{width:30px;height:30px;border-radius:9px;flex:0 0 30px;
+  background:linear-gradient(135deg,#eaf0ff,#f3ecff);display:flex;align-items:center;justify-content:center;color:var(--b1)}
+.sec-head .ico svg{width:18px;height:18px}
+
+/* 营养卡图标 */
+.nut{display:flex;flex-direction:column}
+.nut .ico{font-size:20px;margin-bottom:2px;line-height:1}
+.nut.per .ico{display:none}
+
+/* 空状态插画 */
+.empty-illu{width:150px;height:124px;margin:0 auto 6px;display:block}
+.empty{padding:30px 0}
+.empty .t{font-size:14px;color:var(--ink3)}
+
+/* 进场淡入 */
+.fade{animation:fade .5s ease both}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 </style>
 </head>
 <body>
+<div class="deco"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
 <div class="topbar">
   <div class="brand"><span class="logo">🍱</span>后厨管家 · 营养分析报表</div>
   <div class="spacer"></div>
@@ -148,11 +208,45 @@ footer{text-align:center;color:var(--ink3);font-size:12px;padding:20px 0}
 </div>
 
 <div class="wrap">
-  <div class="page-head">
-    <div>
+  <div class="hero fade">
+    <div class="htxt">
       <h1>营养分析报表</h1>
-      <p>菜单展示 · 实际就餐人数 · 领料出库营养测算 · 分类占比</p>
+      <p>把菜单、实际就餐人数与领料出库串联起来，按商品主数据营养值测算膳食结构，帮助食堂科学配餐、吃得明白。</p>
+      <span class="pill">🍱 菜单 · 👥 就餐人数 · 📦 领料营养 · 🥗 分类占比</span>
     </div>
+    <svg class="illo" viewBox="0 0 220 180" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <g opacity=".85">
+        <path d="M30 22l3 8 8 3-8 3-3 8-3-8-8-3 8-3z" fill="#7c5cff"/>
+        <path d="M192 42l2.4 6 6 2.4-6 2.4-2.4 6-2.4-6-6-2.4 6-2.4z" fill="#06b6d4"/>
+        <circle cx="178" cy="118" r="4.5" fill="#fb923c"/>
+        <circle cx="44" cy="150" r="3.5" fill="#2f6bff"/>
+      </g>
+      <ellipse cx="110" cy="124" rx="88" ry="34" fill="#ffffff" stroke="#e3e9f5" stroke-width="2"/>
+      <ellipse cx="110" cy="120" rx="72" ry="26" fill="#f6f9ff"/>
+      <path d="M58 120c-11-11-4-24 9-24 5 11-2 22-9 24z" fill="#34d399"/>
+      <g transform="translate(76,96)">
+        <circle cx="0" cy="0" r="11" fill="#34d399"/>
+        <circle cx="-9" cy="4" r="8" fill="#10b981"/>
+        <circle cx="9" cy="4" r="8" fill="#10b981"/>
+        <rect x="-3" y="9" width="6" height="12" rx="3" fill="#a7f3d0"/>
+      </g>
+      <g transform="translate(112,114)">
+        <ellipse cx="0" cy="0" rx="17" ry="11" fill="#ffffff" stroke="#e3e9f5"/>
+        <circle cx="0" cy="0" r="6.5" fill="#fbbf24"/>
+      </g>
+      <g transform="translate(142,102)">
+        <circle cx="0" cy="0" r="14" fill="#f87171"/>
+        <path d="M-5 -13l5 7 5 -7-5 3z" fill="#10b981"/>
+      </g>
+      <g transform="translate(162,118) rotate(22)">
+        <path d="M0 -7 L11 15 L-11 15 Z" fill="#fb923c"/>
+        <path d="M-6 11l-3 7M0 15l0 8M6 11l3 7" stroke="#10b981" stroke-width="2.4" stroke-linecap="round"/>
+      </g>
+      <g stroke="#cbd5e1" stroke-width="3" stroke-linecap="round" fill="none">
+        <path d="M16 132v24M16 132v9M21 132v9M11 132v9"/>
+        <path d="M204 132v24"/>
+      </g>
+    </svg>
   </div>
 
   <div class="err" id="errBox"></div>
@@ -183,7 +277,7 @@ footer{text-align:center;color:var(--ink3);font-size:12px;padding:20px 0}
     <div class="cards" id="kpiRow"></div>
 
     <div class="sec">
-      <div class="sec-head"><span class="dot"></span><h2>营养测算</h2>
+      <div class="sec-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7c-2-2-6-1-6 3 0 3 3 6 6 8 3-2 6-5 6-8 0-4-4-5-6-3z"/><path d="M12 7c0-2 1-3 3-3"/></svg></span><h2>营养测算</h2>
         <span class="sub" id="nutSub"></span></div>
       <div class="nut-legend">
         <span>当日领料出库营养总量 <b id="sumNote"></b></span>
@@ -194,13 +288,13 @@ footer{text-align:center;color:var(--ink3);font-size:12px;padding:20px 0}
     </div>
 
     <div class="sec">
-      <div class="sec-head"><span class="dot"></span><h2>菜单展示</h2>
+      <div class="sec-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 9h6M9 13h6M9 17h4"/></svg></span><h2>菜单展示</h2>
         <span class="sub" id="menuSub"></span></div>
       <div id="menuBox"></div>
     </div>
 
     <div class="sec">
-      <div class="sec-head"><span class="dot"></span><h2>领料出库商品</h2>
+      <div class="sec-head"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg></span><h2>领料出库商品</h2>
         <span class="sub" id="soSub"></span></div>
       <div class="note" id="soNote"></div>
       <div class="double">
@@ -224,6 +318,7 @@ footer{text-align:center;color:var(--ink3);font-size:12px;padding:20px 0}
 const $ = id => document.getElementById(id);
 const MEAL_LABEL = {meal:"早餐",lunch:"午餐",dinner:"晚餐",night:"夜宵",other:"其他",
   fruit:"水果",mSnack:"早点",aSnack:"午点"};
+const MEAL_ICON = {meal:"🌅",mSnack:"🥪",lunch:"☀️",aSnack:"🍪",dinner:"🌙",night:"🌃",fruit:"🍎",other:"🍽️"};
 const MEAL_ORDER = ["meal","mSnack","lunch","aSnack","dinner","night","fruit","other"];
 let current = {mode:"day", date:todayStr(), warehouse:""};
 let imgBase = "";
@@ -334,30 +429,30 @@ function render(j){
 
   // KPI
   const kpis=[
-    {t:"实际就餐人数", v:fmt(rpTotal), s:(repast.source||"")},
-    {t:"菜单日期", v:(menu.date_details||[]).length+" 天", s:menu.warehouse_name||""},
-    {t:"领料商品数", v:(so.goods||[]).length+" 种", s:"按商品合并"},
-    {t:"领料总重量", v:fmt(so.total_weight_g), s:"克（折算）"},
+    {icon:"👥", t:"实际就餐人数", v:fmt(rpTotal), s:(repast.source||"")},
+    {icon:"📅", t:"菜单日期", v:(menu.date_details||[]).length+" 天", s:menu.warehouse_name||""},
+    {icon:"📦", t:"领料商品数", v:(so.goods||[]).length+" 种", s:"按商品合并"},
+    {icon:"⚖️", t:"领料总重量", v:fmt(so.total_weight_g), s:"克（折算）"},
   ];
-  $("kpiRow").innerHTML=kpis.map(k=>`<div class="kpi"><div class="t">${k.t}</div><div class="v">${k.v}</div><div class="s">${esc(k.s||"")}</div></div>`).join("");
+  $("kpiRow").innerHTML=kpis.map(k=>`<div class="kpi fade"><div class="badge">${k.icon}</div><div class="body"><div class="t">${k.t}</div><div class="v">${k.v}</div><div class="s">${esc(k.s||"")}</div></div></div>`).join("");
 
   // 营养
   const t=nut.totals||{};
   const nutRow=[
-    {n:"能量", val:fmt(t.energy_kcal), unit:"千卡"},
-    {n:"蛋白质", val:fmt(t.protein_g), unit:"克"},
-    {n:"脂肪", val:fmt(t.fat_g), unit:"克"},
-    {n:"碳水化合物", val:fmt(t.carb_g), unit:"克"},
+    {ico:"🔥", n:"能量", val:fmt(t.energy_kcal), unit:"千卡"},
+    {ico:"💪", n:"蛋白质", val:fmt(t.protein_g), unit:"克"},
+    {ico:"🥑", n:"脂肪", val:fmt(t.fat_g), unit:"克"},
+    {ico:"🍞", n:"碳水化合物", val:fmt(t.carb_g), unit:"克"},
   ];
   const perRow=[
-    {n:"人均能量", val:fmt(per?per.energy_kcal:null), unit:"千卡/人"},
-    {n:"人均蛋白质", val:fmt(per?per.protein_g:null), unit:"克/人"},
-    {n:"人均脂肪", val:fmt(per?per.fat_g:null), unit:"克/人"},
-    {n:"人均碳水", val:fmt(per?per.carb_g:null), unit:"克/人"},
+    {ico:"🧍", n:"人均能量", val:fmt(per?per.energy_kcal:null), unit:"千卡/人"},
+    {ico:"🧍", n:"人均蛋白质", val:fmt(per?per.protein_g:null), unit:"克/人"},
+    {ico:"🧍", n:"人均脂肪", val:fmt(per?per.fat_g:null), unit:"克/人"},
+    {ico:"🧍", n:"人均碳水", val:fmt(per?per.carb_g:null), unit:"克/人"},
   ];
   $("sumNote").textContent="（合计）";
   $("perNote").textContent= rpTotal? `（实际就餐 ${fmt(rpTotal)} 人）` : "（无就餐人数数据）";
-  $("nutRow").innerHTML = nutRow.map(x=>`<div class="nut"><div class="n">${x.n}</div><div class="val">${x.val}<span class="unit"> ${x.unit}</span></div></div>`).join("")
+  $("nutRow").innerHTML = nutRow.map(x=>`<div class="nut fade"><div class="ico">${x.ico}</div><div class="n">${x.n}</div><div class="val">${x.val}<span class="unit"> ${x.unit}</span></div></div>`).join("")
     + `<div class="nut per" style="grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:10px">`
     + perRow.map(x=>`<div><div class="n" style="color:var(--b2)">${x.n}</div><div class="val" style="font-size:20px">${x.val}<span class="unit"> ${x.unit}</span></div></div>`).join("")
     + `</div>`;
@@ -383,7 +478,7 @@ function render(j){
 function renderMenu(menu){
   const dates=menu.date_details||[];
   const box=$("menuBox");
-  if(!dates.length){ box.innerHTML=`<div class="empty"><div class="big">🍽️</div>该区间暂无菜单数据</div>`; return; }
+  if(!dates.length){ box.innerHTML=`<div class="empty"><svg class="empty-illu" viewBox="0 0 150 124" fill="none" xmlns="http://www.w3.org/2000/svg"><ellipse cx="75" cy="86" rx="58" ry="20" fill="#f1f4fb" stroke="#e3e9f5"/><ellipse cx="75" cy="82" rx="46" ry="15" fill="#fff"/><g opacity=".9"><path d="M40 30l2 6 6 2-6 2-2 6-2-6-6-2 6-2z" fill="#cbd5e1"/><circle cx="112" cy="40" r="3.5" fill="#dbe3f5"/></g><g stroke="#cbd5e1" stroke-width="2.4" stroke-linecap="round" fill="none"><path d="M30 70v22M30 70v8M34 70v8M26 70v8"/><path d="M120 70v22"/></g></svg><div class="t">该区间暂无菜单数据</div></div>`; return; }
   box.innerHTML="";
   dates.forEach(dd=>{
     const sec=document.createElement("div"); sec.className="menu-date";
@@ -405,7 +500,7 @@ function renderMenu(menu){
     keys.forEach(k=>{
       const row=document.createElement("div"); row.className="meal-row";
       const tag=document.createElement("div"); tag.className="meal-tag";
-      tag.innerHTML=`<span class="${esc(k)}">${esc(MEAL_LABEL[k]||k)}</span>`;
+      tag.innerHTML=`<span class="${esc(k)}">${MEAL_ICON[k]||"🍽️"} ${esc(MEAL_LABEL[k]||k)}</span>`;
       row.appendChild(tag);
       const dg=document.createElement("div"); dg.className="dishes";
       byMeal[k].forEach(d=>dg.appendChild(dishCard(d)));
@@ -430,8 +525,6 @@ function dishCard(d){
     <div>${d.categoryName?`<span class="cat">${esc(d.categoryName)}</span>`:""}${tags}</div>
     ${ingHtml}
     <div class="foot">
-      ${d.meals?`<span class="ms">${esc(MEAL_LABEL[d.meals]||d.meals)}</span>`:""}
-      ${d.mealStand!=null?`<span>餐标 ${fmt(d.mealStand)} 元</span>`:""}
       ${d.scoreCount?`<span>评分 ${fmt(d.scoreCount)}</span>`:""}
     </div>
   </div>`;
@@ -441,10 +534,12 @@ function dishCard(d){
 let pieChart=null;
 function renderPie(cats){
   const box=$("pieBox");
-  if(!cats.length){ box.innerHTML=`<div class="empty" style="padding:80px 0">暂无分类数据</div>`; return; }
+  if(!cats.length){ box.innerHTML=`<div class="empty" style="padding:60px 0"><svg class="empty-illu" viewBox="0 0 150 124" fill="none" xmlns="http://www.w3.org/2000/svg"><ellipse cx="75" cy="86" rx="58" ry="20" fill="#f1f4fb" stroke="#e3e9f5"/><ellipse cx="75" cy="82" rx="46" ry="15" fill="#fff"/><g opacity=".9"><path d="M40 30l2 6 6 2-6 2-2 6-2-6-6-2 6-2z" fill="#cbd5e1"/><circle cx="112" cy="40" r="3.5" fill="#dbe3f5"/></g><g stroke="#cbd5e1" stroke-width="2.4" stroke-linecap="round" fill="none"><path d="M30 70v22M30 70v8M34 70v8M26 70v8"/><path d="M120 70v22"/></g></svg><div class="t">暂无分类数据</div></div>`; return; }
   if(pieChart){ pieChart.dispose(); pieChart=null; }
-  pieChart=echarts.init(box);
-  pieChart.setOption({
+  // 容器在从 display:none 切出后需确保尺寸再初始化，否则 ECharts 拿到 0 宽
+  requestAnimationFrame(()=>{
+    pieChart=echarts.init(box);
+    pieChart.setOption({
     color:["#2f6bff","#7c5cff","#06b6d4","#f59e0b","#10b981","#ef4444","#8b5cf6","#14b8a6","#f97316","#64748b"],
     tooltip:{trigger:"item",formatter:"{b}<br/>重量 {c} g（{d}%）"},
     legend:{bottom:0,type:"scroll",textStyle:{fontSize:11,color:"#6b7280"}},
@@ -455,6 +550,8 @@ function renderPie(cats){
       emphasis:{label:{show:true,fontSize:16,fontWeight:700}},
       data:cats.map(c=>({name:c.name,value:c.weight_g}))
     }]
+    });
+    pieChart.resize();
   });
   $("pieLegend").textContent = cats.map(c=>`${c.name} ${fmt(c.ratio)}%`).join(" · ");
 }
@@ -463,21 +560,62 @@ window.addEventListener("resize",()=>{ if(pieChart) pieChart.resize(); });
 function renderTable(goods){
   const tb=$("soTable");
   if(!goods.length){ tb.innerHTML=`<tr><td class="empty" style="padding:30px">暂无领料出库数据</td></tr>`; return; }
-  tb.innerHTML=`<thead><tr>
+  // 按分类排序，分类内按商品名排序
+  const sorted=[...goods].sort((a,b)=>{
+    const c=(a.category||"").localeCompare(b.category||"");
+    if(c) return c;
+    return (a.name||"").localeCompare(b.name||"");
+  });
+  // 分组并汇总
+  const groups=[];
+  const totals={count:0,weight_g:0,energy_kcal:0,protein_g:0,fat_g:0,carb_g:0};
+  let cur=null;
+  sorted.forEach(g=>{
+    const cat=g.category||"未分类";
+    if(!cur || cur.cat!==cat){ cur={cat,items:[],weight_g:0,energy_kcal:0,protein_g:0,fat_g:0,carb_g:0}; groups.push(cur); }
+    cur.items.push(g);
+    cur.weight_g     += Number(g.weight_g)||0;
+    cur.energy_kcal  += Number(g.energy_kcal)||0;
+    cur.protein_g    += Number(g.protein_g)||0;
+    cur.fat_g        += Number(g.fat_g)||0;
+    cur.carb_g       += Number(g.carb_g)||0;
+    totals.count++; totals.weight_g+=Number(g.weight_g)||0; totals.energy_kcal+=Number(g.energy_kcal)||0;
+    totals.protein_g+=Number(g.protein_g)||0; totals.fat_g+=Number(g.fat_g)||0; totals.carb_g+=Number(g.carb_g)||0;
+  });
+  const grpLabel=(cat,count)=>`<span class="gdot"></span>${esc(cat)} <span class="gcount">${count} 种</span>`;
+  let body=`<thead><tr>
     <th>商品</th><th>分类</th><th>单位</th><th class="num">数量</th><th class="num">重量(g)</th>
     <th class="num">能量(kcal)</th><th class="num">蛋白(g)</th><th class="num">脂肪(g)</th><th class="num">碳水(g)</th>
-  </tr></thead><tbody>`+
-  goods.map(g=>`<tr>
-    <td><b>${esc(g.name)}</b></td>
-    <td>${esc(g.category)}</td>
-    <td>${esc(g.unit||"-")}</td>
-    <td class="num">${fmt(g.qty)}</td>
-    <td class="num">${fmt(g.weight_g)}</td>
-    <td class="num">${fmt(g.energy_kcal)}</td>
-    <td class="num">${fmt(g.protein_g)}</td>
-    <td class="num">${fmt(g.fat_g)}</td>
-    <td class="num">${fmt(g.carb_g)}</td>
-  </tr>`).join("")+`</tbody>`;
+  </tr></thead><tbody>`;
+  groups.forEach(g=>{
+    body+=`<tr class="grp"><td colspan="4">${grpLabel(g.cat,g.items.length)}</td>
+      <td class="num">${fmt(g.weight_g)}</td>
+      <td class="num">${fmt(g.energy_kcal)}</td>
+      <td class="num">${fmt(g.protein_g)}</td>
+      <td class="num">${fmt(g.fat_g)}</td>
+      <td class="num">${fmt(g.carb_g)}</td></tr>`;
+    g.items.forEach(item=>{
+      body+=`<tr class="item">
+        <td><b>${esc(item.name)}</b></td>
+        <td></td>
+        <td>${esc(item.unit||"-")}</td>
+        <td class="num">${fmt(item.qty)}</td>
+        <td class="num">${fmt(item.weight_g)}</td>
+        <td class="num">${fmt(item.energy_kcal)}</td>
+        <td class="num">${fmt(item.protein_g)}</td>
+        <td class="num">${fmt(item.fat_g)}</td>
+        <td class="num">${fmt(item.carb_g)}</td>
+      </tr>`;
+    });
+  });
+  body+=`<tr class="total"><td colspan="4">合计 <span class="gcount">${totals.count} 种</span></td>
+    <td class="num">${fmt(totals.weight_g)}</td>
+    <td class="num">${fmt(totals.energy_kcal)}</td>
+    <td class="num">${fmt(totals.protein_g)}</td>
+    <td class="num">${fmt(totals.fat_g)}</td>
+    <td class="num">${fmt(totals.carb_g)}</td></tr>`;
+  body+=`</tbody>`;
+  tb.innerHTML=body;
 }
 
 // ---------- 事件 ----------
