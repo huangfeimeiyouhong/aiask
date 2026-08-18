@@ -71,10 +71,15 @@ def _extract_json(text: str) -> dict | list | None:
 
 
 def _walk_date_qty(x, out):
-    """递归扫描接口返回，提取 {date, qty} 结构（防御不同 schema）。"""
+    """递归扫描接口返回，提取 {date, qty} 结构（防御不同 schema）。
+
+    cost/meals/page 真实人数字段为 realRepastQty（实际就餐人数）/ stdRepastQty
+    （标准就餐人数）；优先取实际就餐人数，兼容旧接口的 repastQty/qty 等写法。
+    """
     if isinstance(x, dict):
         dte = x.get("date") or x.get("statDate") or x.get("mealDate")
-        q = x.get("repastQty", x.get("qty", x.get("repastCount", x.get("count"))))
+        q = x.get("realRepastQty", x.get("stdRepastQty",
+                x.get("repastQty", x.get("qty", x.get("repastCount", x.get("count"))))))
         if dte is not None and q is not None:
             try:
                 out.append({"date": str(dte), "qty": _num(q)})
@@ -185,6 +190,30 @@ def fetch_menu(client, begin_date: str, end_date: str, warehouse_uuid: str | Non
 # ---------------------------------------------------------------------------
 # 2) 实际就餐人数
 # ---------------------------------------------------------------------------
+def _months_between(begin_date: str, end_date: str) -> list:
+    """返回覆盖 begin~end（YYYY-MM-DD）的所有月份 YYYY-MM 列表（含跨月）。
+
+    前端「周」模式区间可能跨月，就餐人数接口以月份为维度（monthDate），
+    故需逐月查询覆盖整个区间。
+    """
+    ym1 = (begin_date or "")[:7]
+    ym2 = (end_date or "")[:7]
+    if not ym1 or not ym2:
+        return [x for x in (ym1, ym2) if x]
+    if ym1 == ym2:
+        return [ym1]
+    res = []
+    y, m = int(ym1[:4]), int(ym1[5:7])
+    y2, m2 = int(ym2[:4]), int(ym2[5:7])
+    while (y, m) <= (y2, m2):
+        res.append(f"{y:04d}-{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return res
+
+
 def fetch_repast_qty(client, begin_date: str, end_date: str,
                      warehouse_uuid: str | None = None) -> dict:
     """获取实际就餐人数（按日期）。使用 /cost/meals/page 分页查询。
@@ -194,29 +223,45 @@ def fetch_repast_qty(client, begin_date: str, end_date: str,
     repastQty/qty/repastCount/count）。区间无记录则 total=None。
     """
     result = {"dates": [], "total": None, "source": None, "note": ""}
-    params = {"beginDate": begin_date, "endDate": end_date}
-    if warehouse_uuid:
-        params["warehouseUuid"] = warehouse_uuid
     rows = []
-    try:
-        page = 1
-        while True:
-            params["pageNo"] = page
-            d = client.meals_page(params)
-            if not d.get("success"):
-                break
-            data = d.get("data") or {}
-            recs = data.get("records") or []
-            if not recs:
-                break
-            for r in recs:
-                _walk_date_qty(r, rows)
-            pages = data.get("pages", 1)
-            if page >= pages or page >= 200:
-                break
-            page += 1
-    except Exception:
-        pass
+
+    def _collect(params):
+        # meals_page 翻页汇总（params 已含分页基准字段，仅追加 pageNo）
+        try:
+            page = 1
+            while True:
+                params["pageNo"] = page
+                d = client.meals_page(params)
+                if not d.get("success"):
+                    break
+                data = d.get("data") or {}
+                recs = data.get("records") or []
+                if not recs:
+                    break
+                for r in recs:
+                    _walk_date_qty(r, rows)
+                pages = data.get("pages", 1)
+                if page >= pages or page >= 200:
+                    break
+                page += 1
+        except Exception:
+            pass
+
+    # 优先按 monthDate 查询（对齐后厨管家系统；cost/meals/page 以月份为维度）。
+    # begin_date/end_date 为 YYYY-MM-DD；周模式可能跨月，逐月覆盖。
+    for ym in _months_between(begin_date, end_date):
+        p = {"monthDate": ym}
+        if warehouse_uuid:
+            p["warehouseUuid"] = warehouse_uuid
+        _collect(p)
+
+    # 兜底：若 monthDate 全空，回退 beginDate/endDate 区间查询
+    if not rows:
+        p = {"beginDate": begin_date, "endDate": end_date}
+        if warehouse_uuid:
+            p["warehouseUuid"] = warehouse_uuid
+        _collect(p)
+
     if rows:
         result["dates"] = rows
         result["source"] = "cost/meals/page"
@@ -548,7 +593,10 @@ def compute_nutrition(llm, goods_items: list) -> dict:
     注意：默认不再调用大模型，因此报表生成不再有 ~数十秒的模型等待，速度显著更快。
     """
     if not goods_items:
-        return {"items": [], "note": "无领料出库商品"}
+        return {"items": [], "totals": {"energy_kcal": 0, "protein_g": 0,
+                "fat_g": 0, "carb_g": 0}, "total_weight_g": 0,
+                "note": "无领料出库商品", "model_based": False,
+                "from_goods_count": 0}
     # 仅当显式开启且存在缺主数据营养的商品时，才走大模型（默认关闭）
     use_model = os.environ.get("NUTRITION_USE_LLM") == "1"
     need_llm = [g for g in goods_items if not g.get("nutri100")]
@@ -687,13 +735,15 @@ def build_nutrition_report(client, llm=None, begin_date: str = "",
 
     # 人均营养
     repast_total = repast.get("total")
+    nutr_totals = nutr.get("totals") or {"energy_kcal": 0, "protein_g": 0,
+                                         "fat_g": 0, "carb_g": 0}
     per_capita = None
     if repast_total:
         per_capita = {
-            "energy_kcal": round(nutr["totals"]["energy_kcal"] / repast_total, 1),
-            "protein_g": round(nutr["totals"]["protein_g"] / repast_total, 1),
-            "fat_g": round(nutr["totals"]["fat_g"] / repast_total, 1),
-            "carb_g": round(nutr["totals"]["carb_g"] / repast_total, 1),
+            "energy_kcal": round(nutr_totals["energy_kcal"] / repast_total, 1),
+            "protein_g": round(nutr_totals["protein_g"] / repast_total, 1),
+            "fat_g": round(nutr_totals["fat_g"] / repast_total, 1),
+            "carb_g": round(nutr_totals["carb_g"] / repast_total, 1),
         }
 
     return {
