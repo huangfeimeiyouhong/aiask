@@ -1,102 +1,141 @@
-# 单点登录（SSO）对接说明
+# 后厨管家 AI 问数系统 · 单点登录（SSO）对接说明
 
-> 面向**后厨管家系统侧**开发同学：本文说明如何从后厨管家页面一键跳转到 AI 问数系统，
-> 让已在后厨管家登录的用户**免二次登录**直接进入问数页面。
->
-> 问数侧（本项目）已实现完毕，**无需再改问数代码**，只需后厨管家侧按下述格式发起跳转。
+> 适用系统：后厨管家 AI 问数系统（端口 8011，纯 stdlib Python + ThreadingHTTPServer）
+> 目标：后厨管家后台（https://wms.houchuguanjia.com/）登录后，用户无需再次输入账号即可直接进入 AI 问数，且以**当前登录用户的身份**查数（继承组织/仓库权限隔离）。
 
 ---
 
-## 一、跳转地址
+## 一、接入原理
+
+AI 问数系统**不自有账号体系**，它本身没有"注册/改密"逻辑。它信任后厨管家下发的用户 token，并用这个 token 去调后厨管家接口查数据。
+
+SSO 流程如下：
 
 ```
-https://<问数服务地址>/sso?token=<后厨管家登录token>&username=<用户名>&dataVersion=<可选>
+后厨管家后台（已登录）
+   │  用户点击「AI 问数」菜单
+   ▼
+Java 网关拼接带 token 的重定向 URL
+   ▼
+浏览器跳转到 AI 问数 /sso 端点
+   ▼
+AI 问数服务端用 token 调 verify_token() 校验有效性
+   ▼
+校验通过 → 建立会话、种 HttpOnly Cookie → 302 跳转到问数主页（已登录态）
+校验失败 → 302 跳回登录页，URL 带 sso=invalid（前端提示重新进入）
 ```
 
-示例（内网直连 8011 端口）：
+整个过程中，**token 只出现在跳转瞬间**，成功后 302 重定向会把 token 从地址栏移除，后续请求靠 HttpOnly Cookie 维持会话。
+
+---
+
+## 二、重定向 URL 拼接（Java 侧负责）
+
+后端在「AI 问数」菜单点击时，重定向到以下地址：
 
 ```
-http://192.168.1.100:8011/sso?token=8f3a...c21&username=at0001
+<AIQA_BASE_URL>/sso?token=<用户token>&username=<用户名>&dataVersion=<dataVersion>&redirect=<跳转路径>
 ```
 
 ### 参数说明
 
 | 参数 | 必填 | 说明 |
-|---|---|---|
-| `token` | 是 | 后厨管家登录接口返回的会话 token（即请求头 `Access-Token: m_<token>` 中 `m_` 后面的部分）。若你手上的值本身带 `m_` 前缀，直接传也可以，问数侧会自动剥离。 |
-| `username` | 建议 | 当前登录用户名，仅用于问数页面右上角展示与日志标识。不传则显示为 `sso-user`，不影响取数。 |
-| `dataVersion` | 否 | 后厨管家 `Data-Version` 头的值。若你们环境有多数据版本，请一并传；不传则用问数侧默认值。 |
-| `redirect` | 否 | 登录成功后跳转的**站内相对路径**，默认 `/`（问数主页）。出于安全考虑，只接受以单个 `/` 开头的相对路径，`//` 与绝对 URL 会被忽略并回退到 `/`。 |
+|------|------|------|
+| `token` | ✅ | 后厨管家登录后下发给该用户的 token（原始 token 即可；若带了 `m_` 前缀，AI 问数端会自动剥离，避免双重前缀） |
+| `username` | 否 | 用户名，仅用于界面展示。缺省时显示为 `sso-user` |
+| `dataVersion` | 否 | 后厨管家接口的 dataVersion（数据版本）。建议带上，使 AI 问数端请求接口时与之对齐 |
+| `redirect` | 否 | 登录成功后跳转的相对路径，默认 `/`（问数主页）。必须是以 `/` 开头的同域相对路径，否则会被强制重置为 `/`（防开放重定向） |
 
-**参数务必做 URL 编码**（`encodeURIComponent`）。
+### 拼接示例（Java）
 
-### 前端示例
+```java
+String aiqaBase = "http://192.168.3.77:8011";   // 生产替换为实际域名
+String token = currentUser.getToken();          // 当前登录用户的后厨管家 token
+String username = currentUser.getUsername();
+String dataVersion = currentUser.getDataVersion();
 
-```javascript
-// 后厨管家页面上的 "AI 问数" 按钮
-function openAiQa() {
-  const base  = 'http://192.168.1.100:8011';           // 问数服务地址
-  const token = getAccessToken().replace(/^m_/, '');   // 取当前登录 token，去掉 m_ 前缀
-  const user  = getCurrentUserName();
-  const url = `${base}/sso?token=${encodeURIComponent(token)}`
-            + `&username=${encodeURIComponent(user)}`;
-  window.open(url, '_blank');   // 或 location.href = url
-}
+String redirectUrl = aiqaBase + "/sso"
+    + "?token=" + URLEncoder.encode(token, "UTF-8")
+    + "&username=" + URLEncoder.encode(username, "UTF-8")
+    + "&dataVersion=" + URLEncoder.encode(dataVersion, "UTF-8")
+    + "&redirect=" + URLEncoder.encode("/", "UTF-8");
+
+// 前端：window.location.href = redirectUrl;  （或后端直接 302 重定向）
 ```
 
----
-
-## 二、问数侧的处理流程
-
-1. 接收 `/sso?token=...`；缺 `token` → 302 跳 `/?sso=missing`。
-2. 用该 token 调后厨管家真实接口（`queryWarehouses`，pageSize=1，极轻量）做**有效性实测**；
-   失败 → 302 跳 `/?sso=invalid`，页面提示"单点登录失效，请重新从后厨管家进入"。
-3. 校验通过 → 服务端内存建会话（保存 username / token / dataVersion，TTL 8 小时），
-   下发 `HttpOnly` Cookie `aiqa_sid`，再 **302 跳转到问数主页**。
-4. 此后所有问数请求都以该用户身份调后厨管家接口，**权限、组织、仓库隔离与后厨管家完全一致**。
-
-关键响应示例：
-
-```
-GET /sso?token=<有效token>&username=at0001
-
-HTTP/1.1 302 Found
-Set-Cookie: aiqa_sid=<随机sid>; HttpOnly; Path=/; SameSite=Lax
-Location: /
-```
+> 测试环境 AI 问数地址：`http://192.168.3.77:8011`
+> 生产环境以实际部署域名 / 反向代理地址为准。
 
 ---
 
-## 三、安全设计
+## 三、AI 问数端处理（`/sso` 端点，已内置）
 
-- **token 不落地**：仅存在于问数服务端内存会话中（8 小时过期），不写数据库、不写日志、不返回前端。
-- **不可伪造**：不是"带了 token 就放行"，而是拿 token 去后厨管家接口**实测**成功才建会话。
-- **token 不留在地址栏**：校验通过后立即 302 到 `/`，浏览器地址栏不再包含 token。
-- **防开放重定向**：`redirect` 只允许站内相对路径。
-- **Cookie 防护**：`HttpOnly`（JS 读不到）+ `SameSite=Lax`；HTTPS 部署时在 `.env` 设 `SESSION_SECURE=1`，Cookie 自动加 `Secure`。
+| 步骤 | 行为 |
+|------|------|
+| 1. 取参 | 从 URL query 解析 `token / username / dataVersion / redirect` |
+| 2. 缺失校验 | 无 `token` → 302 到 `/?sso=missing` |
+| 3. 前缀容错 | token 若以 `m_` 开头，自动剥掉（HCGClient 内部会自行拼接 `m_` 前缀） |
+| 4. token 校验 | 用该 token 实例化 HCGClient 并调 `verify_token()`，实测接口成功才算有效 |
+| 5. 建立会话 | `verify_token()` 通过 → 生成 sid，服务端保存 `{username, token, dataVersion, expire}` |
+| 6. 种 Cookie | `Set-Cookie: <COOKIE_NAME>=<sid>; HttpOnly; Path=/; SameSite=Lax` |
+| 7. 跳转 | 302 到 `redirect`（默认 `/`）；token 不再停留在地址栏 |
 
-### 生产环境建议
-
-1. 用 nginx 前置 HTTPS（见 README「反向代理」章节），避免 token 明文出现在 URL 中被中间链路记录。
-2. 若问数与后厨管家不同域，`window.open` 新标签打开即可，无跨域 Cookie 问题（Cookie 种在问数自己的域下）。
-3. 如需更高安全等级，可后续升级为**一次性 ticket** 方案（后厨管家侧签发短时效一次性票据，问数侧回调换取 token），
-   问数侧改造点仅在 `_api_sso`，前端跳转格式不变。
-
----
-
-## 四、兜底与排错
-
-- **密码登录仍然保留**：直接访问 `http://<问数地址>/`，用后厨管家账号密码登录即可，不依赖 SSO。
-- `/?sso=missing`：跳转 URL 里没带 `token`，检查前端拼串。
-- `/?sso=invalid`：token 无效或已过期（后厨管家侧退出登录、token 超时），请让用户在后厨管家重新登录后再跳转。
-- 跳转后仍停在登录页：确认浏览器未拦截 Cookie；若问数部署在 HTTPS 下，确认 `.env` 已设 `SESSION_SECURE=1`。
-- 自检接口：登录后请求 `GET /api/me`，应返回 `{"success": true, "username": "<用户名>"}`。
+前端 `index.html` 进入时会调 `/api/me` 检查登录态：
+- 已登录 → 直接进入问数主界面
+- 未登录但带 `?sso=invalid` / `?sso=missing` → 登录框提示「单点登录失效 / 未检测到凭证，请重新从后厨管家进入，或手动输入账号登录」
 
 ---
 
-## 五、已验证结论
+## 四、前端嵌入方式（三种）
 
-- 单元测试：合法 token 建会话并种 Cookie 跳主页；token 失效 / 缺参正确回退登录页并带提示；`redirect=//evil.com` 被拦截回退 `/`。
-- 真实环境端到端：用后厨管家 demo 账号 `at0001` 取得真实 token，
-  `GET /sso?token=<真实token>&username=at0001` → `302` + `Set-Cookie: aiqa_sid=...` + `Location: /`；
-  带该 Cookie 请求 `/api/me` → `{"success": true, "username": "at0001"}`；不带 Cookie → `{"success": false, "message": "未登录"}`。
+AI 问数是一个独立 Web 应用，后厨管家后台可通过以下任一方式接入：
+
+1. **新标签页 / 菜单跳转（推荐）**
+   菜单点击 → 打开 `<AIQA_BASE_URL>/sso?...`（新标签或当前页跳转均可）。最简单、最稳，互不影响登录态。
+
+2. **iframe 内嵌**
+   后台某个页面用 `<iframe src="<AIQA_BASE_URL>/sso?...">` 内嵌。注意：
+   - Cookie 已设 `SameSite=Lax`，同站点内嵌可正常携带；跨站内嵌需改为 `SameSite=None; Secure` 并启用 HTTPS。
+   - 建议 iframe 内再单独放「营养分析报表」等子页时用 `/nutrition.html`（需先完成 SSO 登录，否则会被拦截回登录页）。
+
+3. **统一门户反向代理**
+   由网关把 `/aiqa/*` 反代到 AI 问数 8011，菜单使用同源路径，避免跨域 / Cookie 问题。
+
+---
+
+## 五、登出联动（可选）
+
+AI 问数提供 `/api/logout`（清除服务端会话 + 清 Cookie）。可选做法：
+
+- **简单方案**：用户在 AI 问数内点「退出」只清 AI 问数会话；后厨管家主系统退出后，AI 问数下次请求会因 token 失效而要求重新 SSO（自愈）。
+- **联动方案**：后厨管家主系统登出时，一并调用 AI 问数 `/api/logout`（需同源/CORS 允许或经网关），实现统一登出。
+
+---
+
+## 六、安全要点
+
+- **token 不落地**：token 仅存在于服务端会话内存，用于向后厨管家发请求；不写入数据库、不写前端可读取的存储。
+- **有效性实测**：`/sso` 不是"有 token 就信"，而是用 token 真实调一次接口（`verify_token()`），杜绝伪造会话 / 过期 token。
+- **防开放重定向**：`redirect` 仅允许同域相对路径。
+- **Cookie 策略**：HttpOnly + SameSite，降低 XSS / CSRF 风险。
+- **URL 短暂暴露**：token 仅出现在 302 跳转瞬间，成功后即从地址栏移除；如介意，可改用「后端到后端一次性 ticket」方案（见下）。
+
+### 可选增强：一次性 Ticket（更严谨）
+
+若不想让 token 出现在浏览器 URL 中，可改为：
+
+1. Java 网关用后厨管家内部密钥调 AI 问数内部接口 `POST /api/sso/exchange`，带上 `{ticket, username, dataVersion}`（ticket 由 Java 侧生成、一次性、短时有效）。
+2. AI 问数校验 ticket 后返回会话 Cookie，前端再带着 Cookie 访问主页。
+
+当前版本未实现该接口，如需要可后续补充。
+
+---
+
+## 七、联调检查清单
+
+- [ ] 后厨管家后台能拿到当前用户的 `token` / `dataVersion`
+- [ ] 菜单跳转 URL 正确拼接并 `URLEncoder` 编码
+- [ ] 浏览器跳转 `/sso` 后能被正确 302 到问数主页（地址栏不再含 token）
+- [ ] 问数主页能正常以该用户身份查数（权限与后厨管家一致）
+- [ ] token 失效 / 过期时，重新从后厨管家进入可恢复
+- [ ] （如内嵌）确认 Cookie 的 SameSite 策略与部署协议（HTTP/HTTPS）匹配
