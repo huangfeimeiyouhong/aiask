@@ -616,6 +616,9 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
     background: linear-gradient(#fff,#fff) padding-box, linear-gradient(135deg,#2f6bff,#7c5cff) border-box;
     box-shadow: 0 4px 14px rgba(47,107,255,.14); }
   .qchip .qc { float: right; font-size: 11px; color: var(--ink3); margin-left: 8px; font-weight: 600; }
+  .qchip-open { border-color: #b9caff; background: linear-gradient(135deg,#eef3ff,#f6f0ff); color: var(--b1); font-weight: 600; }
+  .qchip-open:hover { color: #fff; background: var(--grad); border-color: transparent; transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(47,107,255,.18); }
   .quick-empty { font-size: 12px; color: var(--ink3); line-height: 1.7; background: rgba(255,255,255,.8);
                  border: 1px dashed #d3dcee; border-radius: 10px; padding: 10px 12px; }
   /* 滚动条美化 */
@@ -1615,6 +1618,9 @@ function stopAsk(taskId, controller) {
 async function doAsk(q) {
   const question = (q || $("question").value).trim();
   if (!question) return;
+  // 快捷报表意图拦截：命中营养分析报表类关键词直接打开报表页（而非走对话 LLM）
+  const _open = matchOpenReport(question);
+  if (_open) { openReport(_open, "营养分析报表"); return; }
   $("question").value = "";
   recordUsage(question);
   const btn = $("askBtn");
@@ -1709,7 +1715,8 @@ const SAMPLE_QUESTIONS = [
   "{M}采购入库多少金额？",
   "哪个供应商供货金额最多？",
   "用折线图展示{M}份每日采购金额",
-  "用柱状图展示{M}各供应商采购金额排行"
+  "用柱状图展示{M}各供应商采购金额排行",
+  "打开营养分析报表"
 ];
 function renderSamples() {
   const m = new Date().getMonth() + 1;
@@ -1761,6 +1768,7 @@ const QUICK_REPORTS = [
   { q: "本月排菜成本率，哪些菜超标准" },
   { q: "本月菜品口碑评价，哪些评分偏低" },
   { q: "本月营养 NRV 占比情况" },
+  { q: "营养分析报表", open: "/nutrition.html" },
   { q: "本月询比价成效" },
   { q: "哪个供应商供货金额最多" },
   { q: "库存有哪些临期或过期预警" }
@@ -1812,9 +1820,14 @@ function renderQuickReports() {
   const tg = document.createElement("div"); tg.className = "qt"; tg.textContent = "全局视角报表";
   secG.appendChild(tg);
   QUICK_REPORTS.forEach(r => {
-    const b = document.createElement("button"); b.className = "qchip"; b.type = "button";
-    b.textContent = r.q;
-    b.onclick = () => doAsk(r.q);
+    const b = document.createElement("button"); b.className = "qchip" + (r.open ? " qchip-open" : ""); b.type = "button";
+    b.textContent = r.q + (r.open ? " ↗" : "");
+    if (r.open) {
+      b.title = "在新标签页打开「" + r.q + "」";
+      b.onclick = () => openReport(r.open, r.q);
+    } else {
+      b.onclick = () => doAsk(r.q);
+    }
     secG.appendChild(b);
   });
   body.appendChild(secG);
@@ -1835,7 +1848,24 @@ function renderQuickReports() {
       secH.appendChild(b);
     });
   }
-  body.appendChild(secH);
+    body.appendChild(secH);
+  }
+
+// 打开独立报表页（如营养分析报表），并在对话区给出提示气泡
+function openReport(url, title) {
+  try { window.open(url, "_blank", "noopener"); } catch (e) { location.href = url; }
+  recordUsage(title || url);
+  addMsg("user", title || "报表");
+  addMsg("bot", "已在新标签页打开「" + (title || "报表") + "」，可在其中选择日期与仓库生成报表。");
+  const a = $("askBtn");
+  if (a) { a.textContent = "发送"; a.disabled = false; a.classList.remove("stopping"); }
+}
+
+// 问数关键词匹配：命中营养分析报表类意图直接打开报表页
+function matchOpenReport(q) {
+  const s = (q || "").replace(/\s+/g, "");
+  if (/(营养分析报表|营养报表|膳食营养报表|营养分析)/.test(s)) return "/nutrition.html";
+  return null;
 }
 
 // ----------------------- 事件绑定 -----------------------
