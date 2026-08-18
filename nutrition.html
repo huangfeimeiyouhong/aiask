@@ -527,8 +527,9 @@ function dishCard(d){
   const imgHtml=img?`<img class="img" src="${esc(img)}" loading="lazy" onerror="this.style.display='none'">`
     :`<div class="imgph">🍛</div>`;
   const tags=(d.tags||[]).slice(0,3).map(t=>`<span class="cat">${esc(t)}</span>`).join("");
-  const recipe=(d.recipe||[]).slice(0,6);
-  const ingHtml=recipe.length?`<div class="ing"><b>原料</b>：${recipe.map(esc).join("、")}${d.recipe.length>6?" 等":""}</div>`:"";
+  const rawRecipe=(d.recipe||[]).map(x=>String(x==null?"":x).trim()).filter(Boolean);
+  const recipe=rawRecipe.slice(0,6);
+  const ingHtml=recipe.length?`<div class="ing"><b>原料</b>：${recipe.map(esc).join("、")}${rawRecipe.length>6?" 等":""}</div>`:"";
   el.innerHTML=imgHtml+`<div class="info">
     <div class="nm">${esc(d.dishesName)}${d.isRec?'<span class="rec">推荐</span>':""}</div>
     <div>${d.categoryName?`<span class="cat">${esc(d.categoryName)}</span>`:""}${tags}</div>
