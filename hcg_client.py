@@ -165,6 +165,27 @@ class HCGClient:
         """就餐统计（备用接口，含 repastQty 就餐人数）。"""
         return self._get("/hcgj-portal/api/repast/mealRecord/stat", params)
 
+    def meals_page(self, params: dict | None = None) -> dict:
+        """按日期区间分页查询实际就餐人数。路径实测：不带 /api（/hcgj-portal/cost/meals/page）。
+        返回分页对象 {records, total, pages, ...}；records 为逐日就餐记录
+        （含日期与就餐人数），营养报表用它取实际就餐人数算人均营养。
+        """
+        p = dict(params or {})
+        p.setdefault("pageNo", 1)
+        p.setdefault("pageSize", 200)
+        return self._get("/hcgj-portal/cost/meals/page", p)
+
+    def goods_details(self, goods_uuid: str, params: dict | None = None) -> dict:
+        """按商品 uuid 查询商品详情（含每 100g 营养 goodsNutrition）。
+
+        路径实测：/hcgj-portal/wms/goods/details（不带 /api），参数名为 uuid，
+        无其它过滤参数。营养报表用它只查出库记录实际用到的商品，避免全量拉取
+        商品主数据；返回 data.goodsNutrition 含 nlKcal/dbzG/zfG/tshhwG 等字段。
+        """
+        p = dict(params or {})
+        p["uuid"] = goods_uuid
+        return self._get("/hcgj-portal/wms/goods/details", p)
+
 
     def query_warehouses(self, params: dict | None = None) -> dict:
         """查询用户可见仓库列表。
@@ -184,13 +205,17 @@ class HCGClient:
     def query_suppliers(self, params: dict | None = None) -> dict:
         return self._get("/hcgj-portal/api/wms/com/querySuppliers", params)
 
-    def page_goods(self, params: dict | None = None) -> dict:
+    def page_goods(self, params: dict | None = None, query_nut: bool = True) -> dict:
         """分页查询商品主数据（含营养字段）。路径实测：带 /api。
 
         营养报表用它读取商品每 100g 营养（能量/蛋白质/脂肪/碳水），
         避免回退大模型估算，提速且口径稳定。
+
+        query_nut: 是否携带 queryNut=true。该开关为 True 时接口才会返回
+        goodsNutrition 营养字段；营养报表必须传 True（默认即 True）。
         """
         p = dict(params or {})
+        p["queryNut"] = query_nut
         p.setdefault("pageNo", 1)
         p.setdefault("pageSize", 200)
         return self._get("/hcgj-portal/api/wms/com/pageGoods", p)

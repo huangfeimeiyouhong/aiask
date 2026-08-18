@@ -9,5 +9,8 @@ __pycache__/
 data/
 *.log
 
+# 本地商品营养缓存（非源码，按 uuid 缓存，可重建）
+.cache/
+
 # 系统文件
 .DS_Store

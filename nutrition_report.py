@@ -3,15 +3,19 @@
 
 数据源（均为后厨管家开放接口，经 HCGClient 代理调用）：
   1) /hcgj-portal/api/dish/menu/list          菜单（带 /api，beginDate/endDate/warehouseUuid 必传）
-  2) /hcgj-portal/cost/meals/queryDateGroupStat 实际就餐人数（不带 /api！前缀混用，实测路径）
+  2) /hcgj-portal/cost/meals/page               实际就餐人数（分页，不带 /api）
   3) /hcgj-portal/api/wms/stock/pageStockOut   领料出库记录（按商品合并总重量；分类优先用记录自带 firstCategoryName）
-  4) /hcgj-portal/api/wms/com/pageGoods        商品主数据（含每 100g 营养字段 + firstCategoryUuid）
+  4) /hcgj-portal/wms/goods/details             按商品 uuid 查商品详情（含 goodsNutrition 每 100g 营养）
   5) /hcgj-portal/api/wms/com/queryGoodsCategory  商品分类树（firstCategoryName 为空时按 uuid 还原分类名）
 
 口径：
   - 领料出库按业务口径包含采购越库（出库侧归入领料出库，与 metrics_registry 一致）。
   - 分类：优先用 pageStockOut 记录自带的 firstCategoryName（第一分类名称）；为空时，
-    用商品主数据的 firstCategoryUuid 经 queryGoodsCategory 还原分类名（兜底）。
+    用商品详情的 firstCategoryUuid 经 queryGoodsCategory 还原分类名（兜底）。
+  - 商品营养：用 /wms/goods/details 按出库记录实际的商品 uuid 查询（只查用到的，
+    不全量拉商品主数据），结果按 goodsUuid 本地文件缓存（默认 24h 有效，环境变量
+    GOODS_CACHE_TTL 可调、GOODS_CACHE_REFRESH=1 强制刷新）；缓存命中则不发请求。
+    details 返回 data.goodsNutrition 含 nlKcal/dbzG/zfG/tshhwG（字符串），已兼容提取。
   - 营养值优先级：① 商品主数据每 100g 营养字段 > ② 内置食材营养表（确定性、无需联网）
     > ③ 大模型估算（仅 NUTRITION_USE_LLM=1 时启用，默认关闭）。默认不调大模型，
     报表生成无数十秒模型等待；主数据营养为非检测值，仅供参考。
@@ -22,7 +26,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from collections import defaultdict
+from pathlib import Path
 
 from hunyuan import get_llm, MockLLM
 from hcg_client import extract_warehouses
@@ -181,33 +187,41 @@ def fetch_menu(client, begin_date: str, end_date: str, warehouse_uuid: str | Non
 # ---------------------------------------------------------------------------
 def fetch_repast_qty(client, begin_date: str, end_date: str,
                      warehouse_uuid: str | None = None) -> dict:
-    """获取实际就餐人数（按日期）。主接口失败自动回退 mealRecord/stat。"""
+    """获取实际就餐人数（按日期）。使用 /cost/meals/page 分页查询。
+
+    返回 {dates:[{date,qty}], total, source, note}。就餐人数取分页 records 里
+    的日期 + 人数（_walk_date_qty 防御性提取 date/statDate/mealDate 与
+    repastQty/qty/repastCount/count）。区间无记录则 total=None。
+    """
     result = {"dates": [], "total": None, "source": None, "note": ""}
     params = {"beginDate": begin_date, "endDate": end_date}
     if warehouse_uuid:
         params["warehouseUuid"] = warehouse_uuid
-
-    def _try_call(fn):
-        out = []
-        try:
-            d = fn(params)
-            if d and d.get("success"):
-                _walk_date_qty(d.get("data"), out)
-        except Exception:
-            pass
-        return out
-
-    rows = _try_call(client.meals_query_date_group_stat)
+    rows = []
+    try:
+        page = 1
+        while True:
+            params["pageNo"] = page
+            d = client.meals_page(params)
+            if not d.get("success"):
+                break
+            data = d.get("data") or {}
+            recs = data.get("records") or []
+            if not recs:
+                break
+            for r in recs:
+                _walk_date_qty(r, rows)
+            pages = data.get("pages", 1)
+            if page >= pages or page >= 200:
+                break
+            page += 1
+    except Exception:
+        pass
     if rows:
         result["dates"] = rows
-        result["source"] = "queryDateGroupStat"
+        result["source"] = "cost/meals/page"
     else:
-        rows = _try_call(client.meal_record_stat)
-        if rows:
-            result["dates"] = rows
-            result["source"] = "mealRecord/stat"
-        else:
-            result["note"] = "就餐人数接口未返回数据"
+        result["note"] = "就餐人数接口未返回数据"
     if rows:
         result["total"] = round(sum(r["qty"] for r in rows), 2)
     return result
@@ -289,44 +303,98 @@ def _build_category_map(client) -> dict:
     return m
 
 
-def _build_goods_map(client) -> dict:
-    """goodsUuid -> {name, nutri100, category}。
+# ---------------------------------------------------------------------------
+# 商品营养缓存（按 uuid 本地缓存，只查出库记录用到的商品）
+# ---------------------------------------------------------------------------
+# 说明：后厨管家 /wms/goods/details 可按商品 uuid 查询详情（含 goodsNutrition
+# 每 100g 营养）。「只拉用到的」即：报表先取区间出库记录，收集实际出现的商品
+# uuid，再对每个不在本地缓存里的 uuid 调 details 拉营养并写入本地文件缓存
+# （默认 24h 有效），避免全量拉取商品主数据、也避免重复网络请求。
+_GOODS_CACHE: dict = {}
+_GOODS_CACHE_TS: float = 0.0
+_GOODS_CACHE_TTL: int = int(os.environ.get("GOODS_CACHE_TTL", "86400"))  # 默认 24h
+_GOODS_CACHE_PATH = Path(__file__).resolve().parent / ".cache" / "goods_nutrition_details.json"
 
-    营养取自 pageGoods 商品主数据（每 100g 营养字段），存在时优先于大模型估算。
-    分类优先用 pageStockOut 记录自带的 firstCategoryName；该字段为空时，
-    用商品主数据的 firstCategoryUuid 经 queryGoodsCategory 还原分类名（兜底）。
-    商品可能较多，按 pageGoods 分页拉全量（最多 50 页），建 uuid -> 映射。
-    """
-    m = {}
-    cat_map = _build_category_map(client)
+
+def _goods_cache_load_file() -> bool:
+    global _GOODS_CACHE, _GOODS_CACHE_TS
+    if not _GOODS_CACHE_PATH.exists():
+        return False
     try:
-        page = 1
-        while True:
-            d = client.page_goods({"pageNo": page, "pageSize": 200})
-            if not d.get("success"):
-                break
-            data = d.get("data") or {}
-            goods = data.get("records") if isinstance(data, dict) else data
-            if not goods:
-                break
-            for g in goods:
-                gu = g.get("uuid")
-                if not gu:
-                    continue
-                # 分类：商品主数据自带 firstCategoryName 优先；否则用 firstCategoryUuid 还原
-                cat = g.get("firstCategoryName") or cat_map.get(g.get("firstCategoryUuid")) or ""
-                m[gu] = {
-                    "name": g.get("goodsName") or g.get("name") or "未知商品",
-                    "nutri100": _extract_goods_nutri(g),
-                    "category": cat,
-                }
-            pages = data.get("pages", 1) if isinstance(data, dict) else 1
-            if page >= pages or page >= 50:
-                break
-            page += 1
+        blob = json.loads(_GOODS_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    g = blob.get("goods")
+    ts = blob.get("saved_at")
+    if not isinstance(g, dict) or not ts:
+        return False
+    _GOODS_CACHE = g
+    _GOODS_CACHE_TS = ts
+    return True
+
+
+def _goods_cache_save_file():
+    try:
+        _GOODS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _GOODS_CACHE_PATH.write_text(
+            json.dumps({"saved_at": _GOODS_CACHE_TS, "goods": _GOODS_CACHE},
+                       ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
-    return m
+
+
+def _fetch_one_goods(client, uuid: str, cat_map: dict) -> dict:
+    """单个商品详情 -> {name, nutri100, category, firstCategoryUuid}。
+
+    调 /wms/goods/details（参数 uuid）；营养来自返回的 goodsNutrition 嵌套对象，
+    分类优先用详情自带 firstCategoryName，否则用 firstCategoryUuid 经
+    queryGoodsCategory 还原（兜底）。失败返回空壳（不阻断主流程）。
+    """
+    try:
+        d = client.goods_details(uuid)
+        if d.get("success"):
+            g = d.get("data") or {}
+            cat = g.get("firstCategoryName") or cat_map.get(g.get("firstCategoryUuid")) or ""
+            return {
+                "name": g.get("goodsName") or g.get("name") or "未知商品",
+                "nutri100": _extract_goods_nutri(g),
+                "category": cat,
+                "firstCategoryUuid": g.get("firstCategoryUuid") or "",
+            }
+    except Exception:
+        pass
+    return {"name": "未知商品", "nutri100": None, "category": "", "firstCategoryUuid": ""}
+
+
+def get_goods_map(client, goods_uuids) -> dict:
+    """返回用到的商品 uuid -> {name, category, nutri100, firstCategoryUuid}。
+
+    只查出库记录实际出现的商品：对每个不在本地缓存里的 uuid 调
+    /wms/goods/details 拉营养，结果写入本地文件缓存（默认 24h 有效，
+    GOODS_CACHE_TTL 可调，GOODS_CACHE_REFRESH=1 强制刷新）。缓存命中则不发请求，
+    因此「只拉用到的 + 本地缓存」兼顾速度与后端压力。
+    """
+    global _GOODS_CACHE, _GOODS_CACHE_TS
+    if os.environ.get("GOODS_CACHE_REFRESH") == "1":
+        _GOODS_CACHE = {}
+        _GOODS_CACHE_TS = 0.0
+        try:
+            _GOODS_CACHE_PATH.unlink()
+        except Exception:
+            pass
+    if not _GOODS_CACHE:
+        _goods_cache_load_file()
+
+    uuids = list(goods_uuids or [])
+    missing = [u for u in uuids if u and u not in _GOODS_CACHE]
+    if missing:
+        cat_map = _build_category_map(client)
+        for u in missing:
+            _GOODS_CACHE[u] = _fetch_one_goods(client, u, cat_map)
+        _GOODS_CACHE_TS = time.time()
+        _goods_cache_save_file()
+
+    return {u: _GOODS_CACHE[u] for u in uuids if u in _GOODS_CACHE}
 
 
 def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
@@ -342,7 +410,6 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
       - picked_count / total_count / excluded_count: 命中 / 原始 / 排除 记录数；
       - note: 诊断说明（命中为空时提示后端实际类型分布）。
     """
-    goods_map = _build_goods_map(client)
     params = {"beginDate": begin_date, "endDate": end_date,
               "pageNo": 1, "pageSize": 200, "dateType": 0}
     if warehouse_uuid:
@@ -385,6 +452,10 @@ def fetch_stock_out_by_goods(client, begin_date: str, end_date: str,
                 f"后端实际出库类型分布={out_type_dist}")
     elif picked:
         note = f"已按领料出库+采购越库统计（命中 {len(picked)}/{len(all_rows)} 条）"
+
+    # 只查出库记录实际用到的商品 uuid 的营养（本地缓存，缺才调 details 接口）
+    used_uuids = {r.get("goodsUuid") for (_, _, r) in picked if r.get("goodsUuid")}
+    goods_map = get_goods_map(client, used_uuids)
 
     for c, t, r in picked:
         gu = r.get("goodsUuid")
